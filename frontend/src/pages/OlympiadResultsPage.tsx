@@ -147,6 +147,32 @@ export function OlympiadResultsPage() {
                 <pre className="mt-4 whitespace-pre-wrap rounded-xl bg-[rgba(var(--surface-muted),0.75)] p-4 text-sm">
                   {item.userAnswer || '-'}
                 </pre>
+                {item.files && item.files.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[rgb(var(--text-soft))]">
+                      Прикреплённые файлы
+                    </p>
+                    {item.files.map((file) => (
+                      <a
+                        key={file.id}
+                        href={file.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 rounded-xl border border-[rgb(var(--border))] p-3 text-sm transition hover:bg-[rgba(var(--surface-muted),0.5)]"
+                      >
+                        <span className="text-lg">
+                          {file.mimeType.startsWith('image/') ? '🖼️' : file.mimeType === 'application/pdf' ? '📄' : '📎'}
+                        </span>
+                        <span className="flex-1 truncate font-medium">{file.originalName}</span>
+                        <span className="text-xs text-[rgb(var(--text-soft))]">
+                          {file.size < 1024 * 1024
+                            ? (file.size / 1024).toFixed(1) + ' KB'
+                            : (file.size / (1024 * 1024)).toFixed(1) + ' MB'}
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                )}
                 <div className="mt-4 grid gap-3 md:grid-cols-[160px_1fr_auto] md:items-end">
                   <div>
                     <label className="mb-2 block text-sm font-semibold">Баллы</label>

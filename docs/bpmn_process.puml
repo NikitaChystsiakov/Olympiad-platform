@@ -1,0 +1,122 @@
+@startuml BPMN — Процесс онлайн-олимпиады с прокторингом (исправленная версия)
+
+!theme plain
+skinparam dpi 150
+skinparam defaultFontName Arial
+skinparam activity {
+    BackgroundColor #F8FAFF
+    BorderColor #2F5597
+}
+skinparam sequence {
+    LifeLineBackgroundColor #F8FAFF
+}
+
+title Процесс онлайн-олимпиады с прокторингом
+
+participant "Студент" as Student #e8f4fd
+participant "Платформа" as Platform #fff8e1
+participant "Прокторинг" as Proctoring #ffe6e6
+participant "Организатор" as Organizer #e8f5e9
+
+note right of Platform
+  * JWT-токены используются для аутентификации
+  * События прокторинга: TAB_SWITCH, FULLSCREEN_EXIT, INACTIVITY
+  * Показатель подозрительности = TAB_SWITCH×5 + FULLSCREEN_EXIT×3 + INACTIVITY×0.5
+end note
+
+== Авторизация ==
+
+Student -> Platform: Открыть платформу
+alt Нет аккаунта
+    Student -> Platform: Регистрация (Google OAuth)
+    Platform -> Platform: Создать пользователя
+end
+
+Student -> Platform: Войти в систему
+Platform -> Platform: Проверить учетные данные
+
+alt Успешный вход
+    Platform -> Student: Выдать токены (JWT)
+    Student -> Platform: Открыть dashboard
+else Ошибка
+    Platform -> Student: Показать ошибку авторизации
+    stop
+end
+
+== Выбор олимпиады ==
+
+Student -> Platform: Выбрать оlympiаду
+Student -> Platform: Нажать "Зарегистрироваться"
+Platform -> Platform: Проверить доступность (статус, время, дубликаты)
+
+alt Можно участвовать
+    Platform -> Platform: Создать участие (REGISTERED)
+    Platform -> Student: Подтверждение регистрации
+else Нельзя участвовать
+    Platform -> Student: Вернуть причину отказа
+    stop
+end
+
+== Начало выполнения ==
+
+Student -> Platform: Начать выполнение
+Platform -> Platform: Проверить статус участия (REGISTERED)
+
+alt Можно начать
+    Platform -> Platform: Обновить статус → IN_PROGRESS\nЗафиксировать время начала
+    Platform -> Student: Вернуть вопросы и таймер
+    Student -> Platform: Перейти в полноэкранный режим
+    Platform -> Proctoring: Активировать мониторинг
+else Нельзя начать
+    Platform -> Student: Вернуть ошибку
+    stop
+end
+
+== Прохождение олимпиады (подпроцесс) ==
+
+note over Student, Platform
+  **Подпроцесс: Прохождение олимпиады**
+end note
+
+loop Пока время не истекло
+    Student -> Platform: Открыть вопрос
+    Platform -> Student: Показать текст вопроса
+    
+    Student -> Student: Выбрать ответ
+    Student -> Platform: Отправить ответ
+    
+    Student -> Proctoring: Действия (смена вкладки,\nвыход из fullscreen, бездействие)
+    Proctoring -> Platform: Событие прокторинга
+    
+    Platform -> Platform: Проверить правило античита
+    Platform -> Platform: Проставить флаг нарушения\n(при необходимости)
+    Platform -> Platform: Сохранить событие
+end
+
+== Завершение участия ==
+
+alt Студент нажал "Завершить"
+    Student -> Platform: Инициировать finish
+else Время вышло
+    Platform -> Platform: Авто-завершение по таймеру
+end
+
+Platform -> Platform: Закрыть участие (COMPLETED)
+Platform -> Platform: Подсчитать итоговый балл
+Platform -> Platform: Рассчитать показатель подозрительности\n(suspiciousScore)
+Platform -> Platform: Сохранить результат
+Platform -> Student: Вернуть данные результата
+
+Student -> Platform: Просмотреть результат
+
+== Аналитика прокторинга (подпроцесс) ==
+
+note over Organizer, Platform
+  **Подпроцесс: Аналитика прокторинга**
+end note
+
+Organizer -> Platform: Открыть аналитику
+Platform -> Platform: Загрузить события прокторинга
+Platform -> Organizer: Показать список событий и флаги нарушений
+
+@enduml

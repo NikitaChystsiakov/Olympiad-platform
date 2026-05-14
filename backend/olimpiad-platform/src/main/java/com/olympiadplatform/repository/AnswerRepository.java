@@ -13,6 +13,7 @@ import java.util.Optional;
 public interface AnswerRepository extends JpaRepository<Answer, String> {
     List<Answer> findByParticipationId(String participationId);
     Optional<Answer> findByParticipationIdAndQuestionId(String participationId, String questionId);
+    List<Answer> findAllByQuestionId(String questionId);
 
     @Query("SELECT a FROM Answer a JOIN FETCH a.participation p JOIN FETCH p.user JOIN FETCH p.olympiad WHERE p.olympiad.id = :olympiadId")
     List<Answer> findWithParticipationByOlympiadId(@Param("olympiadId") java.util.UUID olympiadId);

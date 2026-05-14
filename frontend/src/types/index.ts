@@ -124,6 +124,7 @@ export interface ManualReviewItem {
   pointsEarned?: number;
   maxPoints: number;
   reviewComment?: string;
+  files?: FileAttachment[];
 }
 
 export interface PageResponse<T> {
@@ -156,4 +157,13 @@ export interface LocalProctoringEntry {
   metadata: string;
   createdAt: string;
   isFlagged: boolean;
+}
+
+export interface FileAttachment {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  url: string;
+  createdAt: string;
 }

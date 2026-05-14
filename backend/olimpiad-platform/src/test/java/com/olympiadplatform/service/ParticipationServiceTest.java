@@ -8,6 +8,7 @@ import com.olympiadplatform.entity.Question;
 import com.olympiadplatform.entity.User;
 import com.olympiadplatform.exception.BusinessException;
 import com.olympiadplatform.repository.AnswerRepository;
+import com.olympiadplatform.repository.FileAttachmentRepository;
 import com.olympiadplatform.repository.OlympiadRepository;
 import com.olympiadplatform.repository.ParticipationRepository;
 import com.olympiadplatform.repository.QuestionRepository;
@@ -49,6 +50,9 @@ class ParticipationServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private FileAttachmentRepository fileAttachmentRepository;
+
     private ParticipationService service;
     private UUID olympiadId;
     private User student;
@@ -61,7 +65,8 @@ class ParticipationServiceTest {
                 olympiadRepository,
                 questionRepository,
                 answerRepository,
-                userRepository
+                userRepository,
+                fileAttachmentRepository
         );
         olympiadId = UUID.randomUUID();
         student = user("student-1", "student@test.com", User.Role.STUDENT);

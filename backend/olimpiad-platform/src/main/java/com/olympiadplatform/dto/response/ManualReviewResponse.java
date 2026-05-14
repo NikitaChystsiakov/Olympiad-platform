@@ -3,6 +3,8 @@ package com.olympiadplatform.dto.response;
 import lombok.Builder;
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 @Builder
 public class ManualReviewResponse {
@@ -16,4 +18,5 @@ public class ManualReviewResponse {
     private Integer pointsEarned;
     private Integer maxPoints;
     private String reviewComment;
+    private List<FileAttachmentResponse> files;
 }

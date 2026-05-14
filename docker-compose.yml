@@ -59,6 +59,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
     restart: unless-stopped
 
   frontend:
@@ -77,3 +79,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  uploads_data:

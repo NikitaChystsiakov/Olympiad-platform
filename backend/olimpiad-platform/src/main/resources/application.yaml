@@ -22,6 +22,12 @@ spring:
     baseline-on-migrate: true
     locations: classpath:db/migration
 
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB
+      max-request-size: 11MB
+
   data:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
@@ -42,6 +48,10 @@ app:
     url: ${JUDGE0_URL:https://ce.judge0.com}
   calendar:
     nager-date-url: ${NAGER_DATE_URL:https://date.nager.at}
+  upload:
+    dir: ./uploads
+    max-size: 10485760
+    allowed-types: image/jpeg,image/png,image/gif,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 
 logging:
   level:

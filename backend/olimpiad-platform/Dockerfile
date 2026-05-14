@@ -13,6 +13,8 @@ WORKDIR /app
 RUN addgroup -S spring && adduser -S spring -G spring
 COPY --from=build /app/target/olympiad-platform-*.jar app.jar
 
+RUN mkdir -p /app/uploads && chown -R spring:spring /app/uploads
+
 USER spring:spring
 EXPOSE 8080
 

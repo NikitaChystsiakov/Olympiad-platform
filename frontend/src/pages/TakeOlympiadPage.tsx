@@ -10,6 +10,7 @@ import { Loader } from '@/components/ui/Loader';
 import { Textarea } from '@/components/ui/Textarea';
 import { useAuth } from '@/hooks/useAuth';
 import { useProctoring } from '@/hooks/useProctoring';
+import { FileUploader } from '@/components/FileUploader';
 import { useParticipationStore } from '@/store/participationStore';
 import type { ParticipationResult, Question } from '@/types';
 import { formatDurationFromMinutes } from '@/utils/format';
@@ -253,17 +254,33 @@ export function TakeOlympiadPage() {
               );
             })}
 
-          {(currentQuestion.type === 'TEXT' || currentQuestion.type === 'CODE' || currentQuestion.type === 'MANUAL_REVIEW') && (
+          {(currentQuestion.type === 'TEXT' || currentQuestion.type === 'CODE') && (
             <Textarea
               value={answers[currentQuestion.id] ?? ''}
               onChange={(event) => handleAnswerChange(currentQuestion, event.target.value)}
               placeholder={
-                currentQuestion.type === 'CODE' || currentQuestion.type === 'MANUAL_REVIEW'
+                currentQuestion.type === 'CODE'
                   ? 'Введите решение или фрагмент кода'
                   : 'Введите текстовый ответ'
               }
               className="min-h-[220px]"
             />
+          )}
+          {currentQuestion.type === 'MANUAL_REVIEW' && (
+            <>
+              <Textarea
+                value={answers[currentQuestion.id] ?? ''}
+                onChange={(event) => handleAnswerChange(currentQuestion, event.target.value)}
+                placeholder="Введите решение или пояснение (можно прикрепить файл)"
+                className="min-h-[220px]"
+              />
+              {activeParticipation && (
+                <FileUploader
+                  participationId={activeParticipation.id}
+                  questionId={currentQuestion.id}
+                />
+              )}
+            </>
           )}
         </div>
 

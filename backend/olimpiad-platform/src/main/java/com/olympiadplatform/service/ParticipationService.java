@@ -2,6 +2,7 @@ package com.olympiadplatform.service;
 
 import com.olympiadplatform.dto.request.ReviewAnswerRequest;
 import com.olympiadplatform.dto.response.AnswerResultResponse;
+import com.olympiadplatform.dto.response.FileAttachmentResponse;
 import com.olympiadplatform.dto.response.ManualReviewResponse;
 import com.olympiadplatform.dto.response.OlympiadParticipantResponse;
 import com.olympiadplatform.dto.response.ParticipationResponse;
@@ -34,6 +35,7 @@ public class ParticipationService {
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
     private final UserRepository userRepository;
+    private final FileAttachmentRepository fileAttachmentRepository;
 
     @NonNull
     @Transactional
@@ -273,6 +275,17 @@ public class ParticipationService {
                 .sorted(Comparator.comparing(answer -> answer.getParticipation().getFinishedAt(), Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(answer -> {
                     Question question = questionsById.get(answer.getQuestionId());
+                    List<FileAttachmentResponse> files = fileAttachmentRepository.findByAnswerId(answer.getId())
+                            .stream()
+                            .map(fa -> new FileAttachmentResponse(
+                                    fa.getId(),
+                                    fa.getOriginalName(),
+                                    fa.getMimeType(),
+                                    fa.getSize(),
+                                    fa.getUrl(),
+                                    fa.getCreatedAt()
+                            ))
+                            .toList();
                     return ManualReviewResponse.builder()
                             .participationId(answer.getParticipation().getId())
                             .answerId(answer.getId())
@@ -284,6 +297,7 @@ public class ParticipationService {
                             .pointsEarned(answer.getPointsEarned())
                             .maxPoints(question.getPoints())
                             .reviewComment(answer.getReviewComment())
+                            .files(files)
                             .build();
                 })
                 .toList();
