@@ -1,6 +1,5 @@
 import { http } from './http';
 import type {
-  ApiMessage,
   Olympiad,
   OlympiadStatus,
   PageResponse,
@@ -78,8 +77,7 @@ export async function updateQuestion(olympiadId: string, questionId: string, pay
 }
 
 export async function deleteQuestion(olympiadId: string, questionId: string) {
-  const { data } = await http.delete<ApiMessage>(`/olympiads/${olympiadId}/questions/${questionId}`);
-  return data;
+  await http.delete(`/olympiads/${olympiadId}/questions/${questionId}`);
 }
 
 function mapQuestion(raw: RawQuestion): Question {
@@ -89,7 +87,7 @@ function mapQuestion(raw: RawQuestion): Question {
       const parsed = JSON.parse(raw.options);
       options = Array.isArray(parsed) ? parsed.map(String) : undefined;
     } catch {
-      options = raw.options.split(',').map((entry) => entry.trim());
+      options = raw.options.split(',').map((entry) => entry.trim()).filter(Boolean);
     }
   }
 
@@ -98,6 +96,7 @@ function mapQuestion(raw: RawQuestion): Question {
     text: raw.text,
     type: raw.type as Question['type'],
     options,
+    correctAnswer: raw.correctAnswer,
     points: raw.points,
   };
 }

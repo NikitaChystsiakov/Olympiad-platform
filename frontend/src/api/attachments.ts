@@ -29,3 +29,17 @@ export async function fetchAttachments(
 export async function deleteAttachment(attachmentId: string): Promise<void> {
   await http.delete(`/attachments/${attachmentId}`);
 }
+
+/** Files require authentication, so they are fetched as a blob instead of a plain link. */
+export async function downloadAttachment(file: Pick<FileAttachment, 'url' | 'originalName'>) {
+  const path = file.url.replace(/^\/api/, '');
+  const { data } = await http.get<Blob>(path, { responseType: 'blob' });
+  const href = URL.createObjectURL(data);
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = file.originalName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+}

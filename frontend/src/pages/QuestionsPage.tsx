@@ -1,245 +1,441 @@
-import { zodResolver } from '@hookform/resolvers/zod';
-import { Pencil, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { useParams } from 'react-router-dom';
+import { ArrowLeft, Check, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { z } from 'zod';
-import { addQuestion, deleteQuestion, getOlympiadById, getQuestions, updateQuestion } from '@/api/olympiads';
+import { errorMessage } from '@/api/http';
+import { addQuestion, deleteQuestion, getOlympiadById, getQuestions, publishOlympiad, updateQuestion } from '@/api/olympiads';
+import { useT } from '@/i18n';
+import type { Olympiad, Question, QuestionPayload, QuestionType } from '@/types';
+import { cn } from '@/utils/cn';
+import { OlympiadStatusBadge } from '@/components/domain/StatusBadges';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
-import { Loader } from '@/components/ui/Loader';
-import { Select } from '@/components/ui/Select';
-import { Textarea } from '@/components/ui/Textarea';
-import type { Question } from '@/types';
+import { Field, Input, Select, Textarea } from '@/components/ui/Field';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
-const schema = z.object({
-  text: z.string().min(5, 'Введите текст вопроса'),
-  type: z.enum(['SINGLE_CHOICE', 'MULTIPLE_CHOICE', 'TEXT', 'CODE', 'MANUAL_REVIEW']),
-  options: z.string().optional(),
-  correctAnswer: z.string().optional(),
-  points: z.coerce.number().min(1, 'Минимум 1 балл'),
+const TYPES: QuestionType[] = ['SINGLE_CHOICE', 'MULTIPLE_CHOICE', 'TEXT', 'CODE', 'MANUAL_REVIEW'];
+
+interface Draft {
+  type: QuestionType;
+  text: string;
+  options: string[];
+  correct: number[];
+  correctText: string;
+  points: string;
+}
+
+const emptyDraft = (type: QuestionType = 'SINGLE_CHOICE'): Draft => ({
+  type,
+  text: '',
+  options: ['', ''],
+  correct: [],
+  correctText: '',
+  points: '5',
 });
 
-type FormValues = z.infer<typeof schema>;
+function draftFrom(question: Question): Draft {
+  const options = question.options?.length ? [...question.options] : ['', ''];
+  const answers = (question.correctAnswer ?? '').split(/[,|]/).map((item) => item.trim());
+  return {
+    type: question.type,
+    text: question.text,
+    options,
+    correct: options.map((option, index) => (answers.includes(option.trim()) ? index : -1)).filter((index) => index >= 0),
+    correctText: question.type === 'TEXT' ? question.correctAnswer ?? '' : '',
+    points: String(question.points),
+  };
+}
+
+const isChoice = (type: QuestionType) => type === 'SINGLE_CHOICE' || type === 'MULTIPLE_CHOICE';
+const isManual = (type: QuestionType) => type === 'CODE' || type === 'MANUAL_REVIEW';
 
 export function QuestionsPage() {
-  const { id: olympiadId } = useParams();
-  const [title, setTitle] = useState('');
+  const t = useT();
+  const { id: olympiadId = '' } = useParams();
+  const [olympiad, setOlympiad] = useState<Olympiad | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [editing, setEditing] = useState<Question | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft>(emptyDraft());
+  const [errors, setErrors] = useState<Partial<Record<'text' | 'options' | 'correct' | 'points', string>>>({});
+  const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [toDelete, setToDelete] = useState<{ question: Question; n: number } | null>(null);
 
-  const {
-    register,
-    handleSubmit,
-    reset,
-    watch,
-    formState: { errors },
-  } = useForm<FormValues>({
-    resolver: zodResolver(schema),
-    defaultValues: {
-      type: 'SINGLE_CHOICE',
-      points: 1,
-    },
-  });
-
-  const currentType = watch('type');
-
-  useEffect(() => {
-    if (!olympiadId) return;
-    void loadPage(olympiadId);
+  const load = useCallback(async () => {
+    try {
+      const [loaded, list] = await Promise.all([getOlympiadById(olympiadId), getQuestions(olympiadId)]);
+      setOlympiad(loaded);
+      setQuestions(list);
+    } catch (error) {
+      toast.error(errorMessage(error, 'errors.load'));
+    } finally {
+      setLoading(false);
+    }
   }, [olympiadId]);
 
-  const loadPage = async (currentOlympiadId: string) => {
-    try {
-      setIsLoading(true);
-      const [olympiad, list] = await Promise.all([
-        getOlympiadById(currentOlympiadId),
-        getQuestions(currentOlympiadId),
-      ]);
-      setTitle(olympiad.title);
-      setQuestions(list);
-    } catch {
-      toast.error('Не удалось загрузить вопросы');
-    } finally {
-      setIsLoading(false);
-    }
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const editable = olympiad?.status === 'DRAFT' || olympiad?.status === 'PUBLISHED';
+  const totalPoints = questions.reduce((sum, question) => sum + question.points, 0);
+
+  const resetEditor = (type: QuestionType = draft.type) => {
+    setEditingId(null);
+    setDraft(emptyDraft(type));
+    setErrors({});
   };
 
-  const onSubmit = handleSubmit(async (values) => {
-    if (!olympiadId) return;
-    try {
-      setIsSubmitting(true);
-      const payload = {
-        ...values,
-        options: values.options?.trim() ? values.options : undefined,
-        correctAnswer: values.correctAnswer?.trim() ? values.correctAnswer : undefined,
-      };
+  const validate = (): QuestionPayload | null => {
+    const next: typeof errors = {};
+    const text = draft.text.trim();
+    const points = Number(draft.points);
+    const options = draft.options.map((option) => option.trim()).filter(Boolean);
+    if (text.length < 5) next.text = t('questions.errText');
+    if (!Number.isInteger(points) || points < 1 || points > 1000) next.points = t('questions.errPoints');
+    let correctAnswer: string | undefined;
+    if (isChoice(draft.type)) {
+      if (options.length < 2) next.options = t('questions.errOptions');
+      const marked = draft.correct.map((index) => draft.options[index]?.trim()).filter(Boolean);
+      if (marked.length === 0) next.correct = t('questions.errCorrect');
+      correctAnswer = draft.type === 'SINGLE_CHOICE' ? marked[0] : marked.join(',');
+    } else if (draft.type === 'TEXT') {
+      if (!draft.correctText.trim()) next.correct = t('questions.errCorrectText');
+      correctAnswer = draft.correctText.trim();
+    }
+    setErrors(next);
+    if (Object.keys(next).length > 0) return null;
+    return {
+      type: draft.type,
+      text,
+      points,
+      options: isChoice(draft.type) ? JSON.stringify(options) : undefined,
+      correctAnswer,
+    };
+  };
 
-      if (editing) {
-        await updateQuestion(olympiadId, editing.id, payload);
-        toast.success('Вопрос обновлён');
+  const save = async () => {
+    const payload = validate();
+    if (!payload) return;
+    try {
+      setSaving(true);
+      if (editingId) {
+        await updateQuestion(olympiadId, editingId, payload);
+        toast.success(t('questions.saved'));
       } else {
         await addQuestion(olympiadId, payload);
-        toast.success('Вопрос добавлен');
+        toast.success(t('questions.added'));
       }
-
-      reset({ text: '', type: values.type, options: '', correctAnswer: '', points: 1 });
-      setEditing(null);
-      await loadPage(olympiadId);
-    } catch {
-      toast.error('Не удалось сохранить вопрос');
+      resetEditor(draft.type);
+      await load();
+    } catch (error) {
+      toast.error(errorMessage(error, 'errors.save'));
     } finally {
-      setIsSubmitting(false);
+      setSaving(false);
     }
-  });
-
-  const startEdit = (question: Question) => {
-    setEditing(question);
-    reset({
-      text: question.text,
-      type: question.type,
-      options: question.options ? JSON.stringify(question.options, null, 2) : '',
-      correctAnswer: '',
-      points: question.points,
-    });
   };
 
-  const handleDelete = async (questionId: string) => {
-    if (!olympiadId) return;
+  const remove = async () => {
+    if (!toDelete) return;
     try {
-      await deleteQuestion(olympiadId, questionId);
-      toast.success('Вопрос удалён');
-      await loadPage(olympiadId);
-    } catch {
-      toast.error('Не удалось удалить вопрос');
+      await deleteQuestion(olympiadId, toDelete.question.id);
+      toast.success(t('questions.deleted'));
+      if (editingId === toDelete.question.id) resetEditor();
+      setToDelete(null);
+      await load();
+    } catch (error) {
+      toast.error(errorMessage(error));
     }
   };
 
-  if (isLoading) return <Loader />;
+  const publish = async () => {
+    try {
+      setPublishing(true);
+      await publishOlympiad(olympiadId);
+      toast.success(t('dashboard.published'));
+      await load();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  if (loading) return <PageSkeleton />;
+
+  const editingIndex = questions.findIndex((question) => question.id === editingId);
+  const choiceSingle = draft.type === 'SINGLE_CHOICE';
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
-      <Card className="h-fit rounded-[28px] p-6">
-        <h1 className="text-2xl font-extrabold">Вопросы: {title}</h1>
-        <p className="mt-2 text-sm text-[rgb(var(--text-soft))]">
-          Варианты ответов передавайте JSON-массивом, например `["A","B","C"]`.
-        </p>
-
-        <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-          <div>
-            <label className="mb-2 block text-sm font-semibold">Тип вопроса</label>
-            <Select {...register('type')}>
-              <option value="SINGLE_CHOICE">Одиночный выбор</option>
-              <option value="MULTIPLE_CHOICE">Множественный выбор</option>
-              <option value="TEXT">Текстовый ответ</option>
-              <option value="CODE">Код</option>
-              <option value="MANUAL_REVIEW">Задача с ручной проверкой</option>
-            </Select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold">Текст вопроса</label>
-            <Textarea {...register('text')} />
-            {errors.text && <p className="mt-2 text-sm text-rose-500">{errors.text.message}</p>}
-          </div>
-
-          {(currentType === 'SINGLE_CHOICE' || currentType === 'MULTIPLE_CHOICE') && (
-            <div>
-              <label className="mb-2 block text-sm font-semibold">Варианты ответов</label>
-              <Textarea {...register('options')} placeholder='["Вариант 1", "Вариант 2"]' />
-            </div>
-          )}
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold">Правильный ответ</label>
-            <Input
-              {...register('correctAnswer')}
-              placeholder={
-                currentType === 'MULTIPLE_CHOICE' ? 'Например: ["A","C"] или A,C' : 'Введите ответ'
-              }
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold">Баллы</label>
-            <Input type="number" {...register('points')} />
-            {errors.points && <p className="mt-2 text-sm text-rose-500">{errors.points.message}</p>}
-          </div>
-
-          <div className="flex gap-3">
-            <Button type="submit" disabled={isSubmitting}>
-              {editing ? 'Обновить вопрос' : 'Добавить вопрос'}
+    <>
+      <Link to="/dashboard" className="mb-4 inline-flex items-center gap-2 text-sm font-medium text-soft hover:text-fg">
+        <ArrowLeft className="h-4 w-4" />
+        {t('nav.olympiads')}
+      </Link>
+      <PageHeader
+        meta={olympiad && <OlympiadStatusBadge olympiad={olympiad} />}
+        title={olympiad?.title ?? t('questions.title')}
+        lead={
+          <>
+            {t('questions.total', {
+              questions: t('common.questions', { count: questions.length }),
+              points: t('common.points', { count: totalPoints }),
+            })}
+            {' · '}
+            {editable ? t('questions.lead') : t('questions.readOnly')}
+          </>
+        }
+        actions={
+          olympiad?.status === 'DRAFT' && (
+            <Button onClick={() => void publish()} loading={publishing} disabled={questions.length === 0}>
+              <Upload className="h-4 w-4" />
+              {t('questions.publish')}
             </Button>
-            {editing && (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setEditing(null);
-                  reset({ text: '', type: 'SINGLE_CHOICE', options: '', correctAnswer: '', points: 1 });
-                }}
-              >
-                Отмена
-              </Button>
-            )}
-          </div>
-        </form>
-      </Card>
+          )
+        }
+      />
 
-      <div className="space-y-4">
-        {questions.length === 0 ? (
-          <EmptyState
-            title="Вопросы пока не добавлены"
-            description="Создайте первый вопрос, и он сразу появится в списке справа."
-          />
-        ) : (
-          questions.map((question) => (
-            <Card key={question.id}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    <Badge tone="info">{question.type}</Badge>
-                    <Badge tone="neutral">{question.points} балл.</Badge>
-                  </div>
-                  <h3 className="text-lg font-bold">{question.text}</h3>
-                  {question.options && (
-                    <div className="mt-4 space-y-2">
-                      {question.type === 'SINGLE_CHOICE' &&
-                        question.options.map((option) => (
-                          <label key={option} className="flex items-center gap-3 text-sm">
-                            <input type="radio" disabled />
-                            <span>{option}</span>
-                          </label>
-                        ))}
-                      {question.type === 'MULTIPLE_CHOICE' &&
-                        question.options.map((option) => (
-                          <label key={option} className="flex items-center gap-3 text-sm">
-                            <input type="checkbox" disabled />
-                            <span>{option}</span>
-                          </label>
-                        ))}
-                    </div>
+      <div className={cn('grid gap-6', editable && 'lg:grid-cols-[minmax(0,1fr)_400px]')}>
+        <section aria-label={t('questions.title')}>
+          {questions.length === 0 ? (
+            <EmptyState title={t('questions.title')} text={t('questions.empty')} />
+          ) : (
+            <ol className="space-y-3">
+              {questions.map((question, index) => (
+                <li
+                  key={question.id}
+                  className={cn(
+                    'rounded-card border bg-surface p-5 transition-colors',
+                    editingId === question.id ? 'border-accent ring-2 ring-accent/15' : 'border-line',
                   )}
-                </div>
+                >
+                  <div className="flex items-start gap-4">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-ink font-serif text-sm font-semibold text-white dark:bg-fg dark:text-[#0F1211]">
+                      {index + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium leading-snug">{question.text}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Badge tone="accent">{t(`questionType.${question.type}`)}</Badge>
+                        <Badge>{t('common.points', { count: question.points })}</Badge>
+                      </div>
+                      {question.options && question.options.length > 0 && (
+                        <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+                          {question.options.map((option) => {
+                            const correct = (question.correctAnswer ?? '').split(/[,|]/).map((item) => item.trim()).includes(option.trim());
+                            return (
+                              <li key={option} className={cn('flex items-center gap-2 text-sm', correct ? 'font-semibold text-risk-low' : 'text-soft')}>
+                                {correct ? <Check className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />}
+                                {option}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                      {question.type === 'TEXT' && question.correctAnswer && (
+                        <p className="mt-3 flex items-center gap-2 text-sm font-semibold text-risk-low">
+                          <Check className="h-3.5 w-3.5" />
+                          {question.correctAnswer}
+                        </p>
+                      )}
+                    </div>
+                    {editable && (
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingId(question.id);
+                            setDraft(draftFrom(question));
+                            setErrors({});
+                          }}
+                          aria-label={t('common.edit')}
+                          className="grid h-9 w-9 place-items-center rounded-control text-soft hover:bg-fg/[0.06] hover:text-fg"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setToDelete({ question, n: index + 1 })}
+                          aria-label={t('common.delete')}
+                          className="grid h-9 w-9 place-items-center rounded-control text-soft hover:bg-risk-high-bg hover:text-risk-high"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
 
-                <div className="flex gap-2">
-                  <Button variant="ghost" className="w-11 px-0" onClick={() => startEdit(question)}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button variant="danger" className="w-11 px-0" onClick={() => void handleDelete(question.id)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          ))
+        {editable && (
+          <section className="space-y-4 self-start rounded-card border border-line bg-surface p-5 shadow-lift lg:sticky lg:top-8" aria-label={t('questions.add')}>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-serif text-xl font-semibold">
+                {editingId ? t('questions.editing', { n: editingIndex + 1 }) : t('questions.newQuestion')}
+              </h2>
+              {editingId && (
+                <button type="button" onClick={() => resetEditor()} className="inline-flex items-center gap-1 text-sm font-semibold text-soft hover:text-fg">
+                  <X className="h-4 w-4" />
+                  {t('common.cancel')}
+                </button>
+              )}
+            </div>
+
+            <Field label={t('questions.type')} htmlFor="q-type">
+              <Select
+                id="q-type"
+                value={draft.type}
+                onChange={(event) => setDraft((current) => ({ ...current, type: event.target.value as QuestionType, correct: [] }))}
+              >
+                {TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {t(`questionType.${type}`)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Field label={t('questions.text')} htmlFor="q-text" error={errors.text}>
+              <Textarea
+                id="q-text"
+                rows={4}
+                value={draft.text}
+                placeholder={t('questions.textPlaceholder')}
+                aria-invalid={Boolean(errors.text)}
+                onChange={(event) => setDraft((current) => ({ ...current, text: event.target.value }))}
+              />
+            </Field>
+
+            {isChoice(draft.type) && (
+              <fieldset className="space-y-2">
+                <legend className="text-[13px] font-semibold">
+                  {t('questions.options')} <span className="font-normal text-soft">· {choiceSingle ? t('questions.markCorrectSingle') : t('questions.markCorrect')}</span>
+                </legend>
+                {draft.options.map((option, index) => {
+                  const marked = draft.correct.includes(index);
+                  return (
+                    <div key={index} className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        role={choiceSingle ? 'radio' : 'checkbox'}
+                        aria-checked={marked}
+                        aria-label={t('questions.correct')}
+                        onClick={() =>
+                          setDraft((current) => ({
+                            ...current,
+                            correct: choiceSingle
+                              ? [index]
+                              : marked
+                                ? current.correct.filter((item) => item !== index)
+                                : [...current.correct, index],
+                          }))
+                        }
+                        className={cn(
+                          'grid h-10 w-10 shrink-0 place-items-center border transition-colors',
+                          choiceSingle ? 'rounded-full' : 'rounded-[10px]',
+                          marked ? 'border-accent bg-accent text-white dark:text-[#0B1512]' : 'border-line bg-muted text-transparent hover:text-soft',
+                        )}
+                      >
+                        <Check className="h-4 w-4" />
+                      </button>
+                      <Input
+                        value={option}
+                        placeholder={t('questions.optionPlaceholder', { n: index + 1 })}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            options: current.options.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)),
+                          }))
+                        }
+                      />
+                      {draft.options.length > 2 && (
+                        <button
+                          type="button"
+                          aria-label={t('common.delete')}
+                          onClick={() =>
+                            setDraft((current) => ({
+                              ...current,
+                              options: current.options.filter((_, itemIndex) => itemIndex !== index),
+                              correct: current.correct.filter((item) => item !== index).map((item) => (item > index ? item - 1 : item)),
+                            }))
+                          }
+                          className="grid h-10 w-9 shrink-0 place-items-center rounded-control text-soft hover:text-risk-high"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                {draft.options.length < 8 && (
+                  <button
+                    type="button"
+                    onClick={() => setDraft((current) => ({ ...current, options: [...current.options, ''] }))}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {t('questions.addOption')}
+                  </button>
+                )}
+                {(errors.options || errors.correct) && (
+                  <p role="alert" className="text-[13px] font-medium text-risk-high">
+                    {errors.options ?? errors.correct}
+                  </p>
+                )}
+              </fieldset>
+            )}
+
+            {draft.type === 'TEXT' && (
+              <Field label={t('questions.correct')} htmlFor="q-correct" hint={t('questions.correctPlaceholder')} error={errors.correct}>
+                <Input
+                  id="q-correct"
+                  value={draft.correctText}
+                  aria-invalid={Boolean(errors.correct)}
+                  onChange={(event) => setDraft((current) => ({ ...current, correctText: event.target.value }))}
+                />
+              </Field>
+            )}
+
+            {isManual(draft.type) && <p className="rounded-control bg-muted px-3 py-2.5 text-sm text-soft">{t('questions.manualNote')}</p>}
+
+            <Field label={t('questions.points')} htmlFor="q-points" error={errors.points} className="max-w-[160px]">
+              <Input
+                id="q-points"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={1000}
+                value={draft.points}
+                aria-invalid={Boolean(errors.points)}
+                onChange={(event) => setDraft((current) => ({ ...current, points: event.target.value }))}
+              />
+            </Field>
+
+            <Button className="w-full" size="lg" onClick={() => void save()} loading={saving}>
+              {editingId ? t('questions.submitSave') : t('questions.submitAdd')}
+            </Button>
+          </section>
         )}
       </div>
-    </div>
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        title={toDelete ? t('questions.deleteConfirm', { n: toDelete.n }) : ''}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        tone="danger"
+        onConfirm={() => void remove()}
+        onCancel={() => setToDelete(null)}
+      >
+        {toDelete?.question.text}
+      </ConfirmDialog>
+    </>
   );
 }

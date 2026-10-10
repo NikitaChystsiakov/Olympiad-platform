@@ -1,319 +1,239 @@
+import { zodResolver } from '@hookform/resolvers/zod';
+import { ArrowLeft, CalendarDays } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { z } from 'zod';
 import { getPublicHolidays, type Holiday } from '@/api/calendar';
+import { errorMessage } from '@/api/http';
 import { createOlympiad, getOlympiadById, updateOlympiad } from '@/api/olympiads';
+import { useLocale, useT } from '@/i18n';
+import { formatDate, formatDateTime, formatDuration, fromDateTimeLocalValue, toDateTimeLocalValue } from '@/utils/format';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
-import { Loader } from '@/components/ui/Loader';
-import { Textarea } from '@/components/ui/Textarea';
+import { Field, Input, Textarea } from '@/components/ui/Field';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
-interface OlympiadFormPageProps {
-  mode?: 'create' | 'edit';
+function defaultWindow() {
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  start.setHours(start.getHours() + 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  return { start: toDateTimeLocalValue(start.toISOString()), end: toDateTimeLocalValue(end.toISOString()) };
 }
 
-export function OlympiadFormPage({ mode: _mode }: OlympiadFormPageProps) {
+export function OlympiadFormPage() {
+  const t = useT();
+  const locale = useLocale();
   const navigate = useNavigate();
   const { id } = useParams();
-  const isEdit = !!id;
-  const [isLoading, setIsLoading] = useState(isEdit);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [holidays, setHolidays] = useState<Holiday[]>([]);
-  const [isLoadingHolidays, setIsLoadingHolidays] = useState(false);
-  const [holidayApiError, setHolidayApiError] = useState(false);
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    startDateTime: '',
-    endDateTime: '',
-    durationMinutes: 60,
+  const isEdit = Boolean(id);
+  const [loading, setLoading] = useState(isEdit);
+  const [submitting, setSubmitting] = useState(false);
+
+  const schema = useMemo(
+    () =>
+      z
+        .object({
+          title: z.string().trim().min(5, t('olympiadForm.errTitle')).max(200, t('olympiadForm.errTitle')),
+          description: z.string().trim().min(10, t('olympiadForm.errDescription')).max(2000, t('olympiadForm.errDescription')),
+          start: z.string().min(1, t('olympiadForm.errRequired')),
+          end: z.string().min(1, t('olympiadForm.errRequired')),
+          durationMinutes: z.coerce.number().int().min(5, t('olympiadForm.errDuration')).max(480, t('olympiadForm.errDuration')),
+        })
+        .refine((values) => !values.start || !values.end || new Date(values.end) > new Date(values.start), {
+          message: t('olympiadForm.errWindow'),
+          path: ['end'],
+        }),
+    [t],
+  );
+  type FormValues = z.infer<typeof schema>;
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors },
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { title: '', description: '', durationMinutes: 60, ...defaultWindow() },
   });
 
   useEffect(() => {
-    if (!isEdit || !id) return;
+    if (!id) return;
     getOlympiadById(id)
-      .then((olympiad) => {
-        setFormData({
+      .then((olympiad) =>
+        reset({
           title: olympiad.title,
-          description: olympiad.description,
-          startDateTime: olympiad.startTime.slice(0, 16),
-          endDateTime: olympiad.endTime.slice(0, 16),
+          description: olympiad.description ?? '',
+          start: toDateTimeLocalValue(olympiad.startTime),
+          end: toDateTimeLocalValue(olympiad.endTime),
           durationMinutes: olympiad.durationMinutes,
-        });
-      })
-      .catch(() => toast.error('Не удалось загрузить олимпиаду'))
-      .finally(() => setIsLoading(false));
-  }, [id, isEdit]);
+        }),
+      )
+      .catch((error) => toast.error(errorMessage(error, 'errors.load')))
+      .finally(() => setLoading(false));
+  }, [id, reset]);
 
-  const holidayYears = useMemo(
-    () => getYearsBetween(formData.startDateTime, formData.endDateTime),
-    [formData.startDateTime, formData.endDateTime],
-  );
+  const [start, end, duration] = watch(['start', 'end', 'durationMinutes']);
+  const holidays = useHolidays(start, end);
 
-  useEffect(() => {
-    if (holidayYears.length === 0) {
-      setHolidays([]);
-      setHolidayApiError(false);
-      return;
-    }
-
-    let isMounted = true;
-    setIsLoadingHolidays(true);
-    setHolidayApiError(false);
-
-    Promise.all(holidayYears.map((year) => getPublicHolidays(year)))
-      .then((items) => {
-        if (!isMounted) return;
-        setHolidays(items.flat());
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setHolidays([]);
-        setHolidayApiError(true);
-      })
-      .finally(() => {
-        if (isMounted) setIsLoadingHolidays(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [holidayYears]);
-
-  const holidaysInStartWindow = useMemo(
-    () => filterHolidaysInWindow(holidays, formData.startDateTime, formData.endDateTime),
-    [formData.endDateTime, formData.startDateTime, holidays],
-  );
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-
-    if (!formData.title.trim()) {
-      toast.error('Введите название олимпиады');
-      return;
-    }
-    if (!formData.startDateTime || !formData.endDateTime) {
-      toast.error('Укажите окно времени, когда участник может начать олимпиаду');
-      return;
-    }
-    if (new Date(formData.endDateTime) <= new Date(formData.startDateTime)) {
-      toast.error('Окончание окна старта должно быть позже начала');
-      return;
-    }
-    if (formData.durationMinutes < 10) {
-      toast.error('Длительность выполнения должна быть не меньше 10 минут');
-      return;
-    }
-
+  const onSubmit = handleSubmit(async (values) => {
     const payload = {
-      title: formData.title.trim(),
-      description: formData.description,
-      startTime: toLocalDateTime(formData.startDateTime),
-      endTime: `${toLocalDateTime(formData.endDateTime)}:00`,
-      durationMinutes: formData.durationMinutes,
+      title: values.title,
+      description: values.description,
+      startTime: fromDateTimeLocalValue(values.start),
+      endTime: fromDateTimeLocalValue(values.end),
+      durationMinutes: values.durationMinutes,
     };
-
     try {
-      setIsSubmitting(true);
-      if (isEdit && id) {
+      setSubmitting(true);
+      if (id) {
         await updateOlympiad(id, payload);
-        toast.success('Олимпиада обновлена');
+        toast.success(t('olympiadForm.updated'));
+        navigate('/dashboard');
       } else {
-        await createOlympiad(payload);
-        toast.success('Олимпиада создана как черновик');
+        const created = await createOlympiad(payload);
+        toast.success(t('olympiadForm.created'));
+        navigate(`/olympiads/${created.id}/questions`);
       }
-      navigate('/dashboard');
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Ошибка сохранения');
+    } catch (error) {
+      toast.error(errorMessage(error, 'errors.save'));
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
-  };
+  });
 
-  if (isLoading) return <Loader />;
+  if (loading) return <PageSkeleton />;
+
+  const validWindow = start && end && new Date(end) > new Date(start);
 
   return (
-    <div className="mx-auto max-w-3xl animate-floatIn">
-      <Card className="rounded-[18px] border border-[rgba(var(--border),0.6)] bg-[rgba(var(--surface),0.85)] p-8 shadow-soft backdrop-blur-sm">
-        <div className="mb-8">
-          <h1 className="text-3xl font-extrabold">
-            {isEdit ? 'Редактирование олимпиады' : 'Создание олимпиады'}
-          </h1>
-          <p className="mt-2 text-sm text-[rgb(var(--text-soft))]">
-            Окно старта задает период, когда студент может начать попытку. Длительность считается отдельно для каждой попытки.
-          </p>
+    <>
+      <Link to="/dashboard" className="mb-4 inline-flex items-center gap-2 text-sm font-medium text-soft hover:text-fg">
+        <ArrowLeft className="h-4 w-4" />
+        {t('nav.olympiads')}
+      </Link>
+      <PageHeader title={isEdit ? t('olympiadForm.editTitle') : t('olympiadForm.createTitle')} lead={t('olympiadForm.lead')} />
+
+      <form onSubmit={onSubmit} noValidate className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="space-y-6">
+          <section className="space-y-4 rounded-card border border-line bg-surface p-5 shadow-lift sm:p-6">
+            <h2 className="font-serif text-xl font-semibold">{t('olympiadForm.basics')}</h2>
+            <Field label={t('olympiadForm.title')} htmlFor="title" error={errors.title?.message}>
+              <Input id="title" placeholder={t('olympiadForm.titlePlaceholder')} aria-invalid={Boolean(errors.title)} {...register('title')} />
+            </Field>
+            <Field label={t('olympiadForm.description')} htmlFor="description" error={errors.description?.message}>
+              <Textarea
+                id="description"
+                rows={5}
+                placeholder={t('olympiadForm.descriptionPlaceholder')}
+                aria-invalid={Boolean(errors.description)}
+                {...register('description')}
+              />
+            </Field>
+          </section>
+
+          <section className="space-y-4 rounded-card border border-line bg-surface p-5 shadow-lift sm:p-6">
+            <h2 className="font-serif text-xl font-semibold">{t('olympiadForm.schedule')}</h2>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label={t('olympiadForm.startFrom')} htmlFor="start" error={errors.start?.message}>
+                <Input id="start" type="datetime-local" aria-invalid={Boolean(errors.start)} {...register('start')} />
+              </Field>
+              <Field label={t('olympiadForm.startUntil')} htmlFor="end" error={errors.end?.message}>
+                <Input id="end" type="datetime-local" aria-invalid={Boolean(errors.end)} {...register('end')} />
+              </Field>
+            </div>
+            <Field label={t('olympiadForm.duration')} htmlFor="duration" hint={t('olympiadForm.durationHint')} error={errors.durationMinutes?.message} className="sm:max-w-[240px]">
+              <Input id="duration" type="number" inputMode="numeric" min={5} max={480} step={5} aria-invalid={Boolean(errors.durationMinutes)} {...register('durationMinutes')} />
+            </Field>
+          </section>
+
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" size="lg" loading={submitting}>
+              {isEdit ? t('olympiadForm.submitEdit') : t('olympiadForm.submitCreate')}
+            </Button>
+            <Button variant="ghost" size="lg" onClick={() => navigate('/dashboard')}>
+              {t('common.cancel')}
+            </Button>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-[rgb(var(--text))]">
-              Название олимпиады
-            </label>
-            <Input
-              value={formData.title}
-              onChange={(event) => setFormData({ ...formData, title: event.target.value })}
-              placeholder="Например: Олимпиада по программированию 2026"
-            />
-          </div>
+        <aside className="space-y-4 lg:sticky lg:top-8 lg:self-start">
+          <section className="rounded-card bg-ink p-5 text-white dark:bg-[#0A0C0B]">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/55">{t('olympiadForm.summary')}</h2>
+            <p className="mt-3 leading-relaxed">
+              {validWindow
+                ? t('olympiadForm.summaryText', {
+                    from: formatDateTime(new Date(start).toISOString(), locale),
+                    until: formatDateTime(new Date(end).toISOString(), locale),
+                    duration: formatDuration(Number(duration) || 0, locale),
+                  })
+                : t('olympiadForm.summaryEmpty')}
+            </p>
+          </section>
 
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-[rgb(var(--text))]">
-              Описание
-            </label>
-            <Textarea
-              value={formData.description}
-              onChange={(event) => setFormData({ ...formData, description: event.target.value })}
-              placeholder="Темы, правила и требования к участникам"
-              rows={4}
-            />
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-[rgb(var(--text))]">
-                Начать можно с
-              </label>
-              <Input
-                type="datetime-local"
-                value={formData.startDateTime}
-                onChange={(event) => setFormData({ ...formData, startDateTime: event.target.value })}
-              />
+          <section className="rounded-card border border-line bg-surface p-5">
+            <h2 className="flex items-center gap-2 font-semibold">
+              <CalendarDays className="h-4 w-4 text-accent" />
+              {t('olympiadForm.holidays')}
+            </h2>
+            <div className="mt-2 text-sm">
+              {holidays.state === 'loading' && <p className="text-soft">{t('olympiadForm.holidaysLoading')}</p>}
+              {holidays.state === 'error' && <p className="text-risk-mid">{t('olympiadForm.holidaysError')}</p>}
+              {holidays.state === 'ready' && holidays.items.length === 0 && <p className="text-soft">{t('olympiadForm.holidaysNone')}</p>}
+              {holidays.state === 'ready' && holidays.items.length > 0 && (
+                <ul className="space-y-1.5">
+                  {holidays.items.map((holiday) => (
+                    <li key={`${holiday.date}-${holiday.name}`} className="flex gap-3 rounded-control bg-risk-mid-bg px-3 py-2">
+                      <span className="font-semibold text-risk-mid">{formatDate(`${holiday.date}T00:00:00`, locale)}</span>
+                      <span>{locale === 'ru' ? holiday.localName : holiday.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-[rgb(var(--text))]">
-                Начать можно до
-              </label>
-              <Input
-                type="datetime-local"
-                value={formData.endDateTime}
-                onChange={(event) => setFormData({ ...formData, endDateTime: event.target.value })}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-[rgb(var(--text))]">
-              Длительность выполнения, минут
-            </label>
-            <Input
-              type="number"
-              min="10"
-              max="300"
-              step="5"
-              value={formData.durationMinutes}
-              onChange={(event) => setFormData({ ...formData, durationMinutes: Number(event.target.value) })}
-            />
-          </div>
-
-          {formData.startDateTime && formData.endDateTime && (
-            <div className="rounded-xl border border-[rgba(var(--primary),0.2)] bg-[rgba(var(--primary),0.04)] p-4">
-              <p className="text-sm font-semibold text-[rgb(var(--primary))]">Параметры попытки</p>
-              <p className="mt-2 text-sm text-[rgb(var(--text-soft))]">
-                Студент может начать с {formatDateTime(formData.startDateTime)} до {formatDateTime(formData.endDateTime)}.
-                После старта таймер будет идти {formData.durationMinutes} минут.
-              </p>
-            </div>
-          )}
-
-          {formData.startDateTime && formData.endDateTime && (
-            <div className="rounded-xl border border-[rgba(var(--border),0.7)] bg-[rgba(var(--surface-muted),0.55)] p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-[rgb(var(--text))]">Календарь праздников</p>
-                  <p className="mt-1 text-sm text-[rgb(var(--text-soft))]">
-                    Проверка окна старта по публичному календарю Nager.Date для Беларуси.
-                  </p>
-                </div>
-                <span className="rounded-full border border-[rgba(var(--border),0.8)] px-3 py-1 text-xs font-semibold text-[rgb(var(--text-soft))]">
-                  BY
-                </span>
-              </div>
-
-              <div className="mt-3 text-sm">
-                {isLoadingHolidays && <p className="text-[rgb(var(--text-soft))]">Проверяем даты...</p>}
-                {!isLoadingHolidays && holidayApiError && (
-                  <p className="text-red-500">Календарь временно недоступен, сохранение олимпиады не заблокировано.</p>
-                )}
-                {!isLoadingHolidays && !holidayApiError && holidaysInStartWindow.length === 0 && (
-                  <p className="text-[rgb(var(--text-soft))]">В выбранном окне государственных праздников не найдено.</p>
-                )}
-                {!isLoadingHolidays && !holidayApiError && holidaysInStartWindow.length > 0 && (
-                  <div className="space-y-2">
-                    {holidaysInStartWindow.map((holiday) => (
-                      <div
-                        key={`${holiday.countryCode}-${holiday.date}-${holiday.name}`}
-                        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-[rgba(var(--surface),0.9)] px-3 py-2"
-                      >
-                        <span className="font-semibold text-[rgb(var(--primary))]">
-                          {new Date(`${holiday.date}T00:00:00`).toLocaleDateString('ru-RU')}
-                        </span>
-                        <span className="text-[rgb(var(--text))]">{holiday.localName || holiday.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="flex justify-end gap-3 pt-4">
-            <Button type="button" variant="secondary" onClick={() => navigate('/dashboard')} className="px-6">
-              Отмена
-            </Button>
-            <Button type="submit" disabled={isSubmitting} className="px-6">
-              {isSubmitting ? 'Сохраняем...' : isEdit ? 'Обновить олимпиаду' : 'Сохранить олимпиаду'}
-            </Button>
-          </div>
-        </form>
-      </Card>
-    </div>
+          </section>
+        </aside>
+      </form>
+    </>
   );
 }
 
-function toLocalDateTime(value: string) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
+function useHolidays(start: string, end: string) {
+  const [state, setState] = useState<{ state: 'idle' | 'loading' | 'ready' | 'error'; items: Holiday[] }>({ state: 'idle', items: [] });
+  const startDate = start?.slice(0, 10);
+  const endDate = end?.slice(0, 10);
 
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
+  useEffect(() => {
+    if (!startDate || !endDate || endDate < startDate) {
+      setState({ state: 'idle', items: [] });
+      return;
+    }
+    const years: number[] = [];
+    for (let year = Number(startDate.slice(0, 4)); year <= Number(endDate.slice(0, 4)); year += 1) years.push(year);
+    let cancelled = false;
+    setState((current) => ({ ...current, state: 'loading' }));
+    const timer = window.setTimeout(() => {
+      Promise.all(years.slice(0, 3).map((year) => getPublicHolidays(year)))
+        .then((lists) => {
+          if (cancelled) return;
+          const items = lists
+            .flat()
+            .filter((holiday) => holiday.date >= startDate && holiday.date <= endDate)
+            .sort((a, b) => a.date.localeCompare(b.date));
+          setState({ state: 'ready', items });
+        })
+        .catch(() => !cancelled && setState({ state: 'error', items: [] }));
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [startDate, endDate]);
 
-function getYearsBetween(start: string, end: string) {
-  if (!start || !end) return [];
-
-  const startYear = new Date(start).getFullYear();
-  const endYear = new Date(end).getFullYear();
-  if (Number.isNaN(startYear) || Number.isNaN(endYear)) return [];
-
-  const years = new Set<number>();
-  for (let year = startYear; year <= endYear; year += 1) {
-    years.add(year);
-  }
-  return Array.from(years);
-}
-
-function filterHolidaysInWindow(holidays: Holiday[], start: string, end: string) {
-  if (!start || !end) return [];
-
-  const startDate = start.slice(0, 10);
-  const endDate = end.slice(0, 10);
-  if (!startDate || !endDate) return [];
-
-  return holidays
-    .filter((holiday) => holiday.date >= startDate && holiday.date <= endDate)
-    .sort((left, right) => left.date.localeCompare(right.date));
+  return state;
 }

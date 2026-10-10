@@ -1,203 +1,277 @@
-import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { ArrowLeft, Download, ShieldAlert } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { downloadAttachment } from '@/api/attachments';
+import { errorMessage } from '@/api/http';
+import { getOlympiadById } from '@/api/olympiads';
 import { getManualReviewQueue, getOlympiadParticipants, reviewAnswer } from '@/api/participations';
+import { getProctoringReport } from '@/api/proctoring';
+import { useT } from '@/i18n';
+import type { ManualReviewItem, Olympiad, OlympiadParticipant, RiskLevel } from '@/types';
+import { cn } from '@/utils/cn';
+import { formatShort } from '@/utils/format';
+import { FileIcon } from '@/components/domain/FileUploader';
+import { AttemptStatusBadge, RiskBadge } from '@/components/domain/StatusBadges';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
-import { Loader } from '@/components/ui/Loader';
-import { Textarea } from '@/components/ui/Textarea';
-import type { ManualReviewItem, OlympiadParticipant } from '@/types';
-import { formatDateTime } from '@/utils/format';
+import { Button, ButtonLink } from '@/components/ui/Button';
+import { Chips } from '@/components/ui/Chips';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Field, Input, Textarea } from '@/components/ui/Field';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { ScoreBar } from '@/components/ui/ScoreBar';
+import { PageSkeleton } from '@/components/ui/Skeleton';
+
+type Tab = 'ranking' | 'review';
+
+/** Code answers keep their indentation in a monospace face; prose stays in the UI face. */
+function looksLikeCode(text?: string) {
+  return Boolean(text && /\n\s{2,}|[{};]\s*$|^\s*(def|function|class|public|#include|import)\b/m.test(text));
+}
 
 export function OlympiadResultsPage() {
-  const { id: olympiadId } = useParams();
+  const t = useT();
+  const { id: olympiadId = '' } = useParams();
+  const [params, setParams] = useSearchParams();
+  const tab = (params.get('tab') as Tab) || 'ranking';
+  const [olympiad, setOlympiad] = useState<Olympiad | null>(null);
   const [participants, setParticipants] = useState<OlympiadParticipant[]>([]);
-  const [reviewItems, setReviewItems] = useState<ManualReviewItem[]>([]);
-  const [scores, setScores] = useState<Record<string, string>>({});
-  const [comments, setComments] = useState<Record<string, string>>({});
-  const [isLoading, setIsLoading] = useState(true);
+  const [queue, setQueue] = useState<ManualReviewItem[]>([]);
+  const [risk, setRisk] = useState<Record<string, RiskLevel>>({});
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!olympiadId) return;
-    void loadData(olympiadId);
+  const load = useCallback(async () => {
+    try {
+      const [loadedOlympiad, list, review] = await Promise.all([
+        getOlympiadById(olympiadId),
+        getOlympiadParticipants(olympiadId),
+        getManualReviewQueue(olympiadId),
+      ]);
+      setOlympiad(loadedOlympiad);
+      setParticipants(list);
+      setQueue(review);
+      // Risk is secondary data: the ranking still renders if the report fails.
+      getProctoringReport(olympiadId)
+        .then((report) => setRisk(Object.fromEntries(report.participants.map((p) => [p.email, p.riskLevel]))))
+        .catch(() => undefined);
+    } catch (error) {
+      toast.error(errorMessage(error, 'errors.load'));
+    } finally {
+      setLoading(false);
+    }
   }, [olympiadId]);
 
-  const loadData = async (currentOlympiadId: string) => {
-    try {
-      setIsLoading(true);
-      const [participantsList, reviewList] = await Promise.all([
-        getOlympiadParticipants(currentOlympiadId),
-        getManualReviewQueue(currentOlympiadId),
-      ]);
-      setParticipants(participantsList);
-      setReviewItems(reviewList);
-      setScores(Object.fromEntries(reviewList.map((item) => [item.answerId, `${item.pointsEarned ?? 0}`])));
-      setComments(Object.fromEntries(reviewList.map((item) => [item.answerId, item.reviewComment ?? ''])));
-    } catch {
-      toast.error('Не удалось загрузить результаты олимпиады');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const handleReview = async (item: ManualReviewItem) => {
-    if (!olympiadId) return;
-    const points = Number(scores[item.answerId] ?? 0);
-    if (!Number.isFinite(points) || points < 0 || points > item.maxPoints) {
-      toast.error(`Баллы должны быть от 0 до ${item.maxPoints}`);
-      return;
-    }
+  if (loading) return <PageSkeleton />;
 
-    try {
-      await reviewAnswer(item.answerId, {
-        pointsEarned: points,
-        reviewComment: comments[item.answerId],
-      });
-      toast.success('Оценка сохранена');
-      await loadData(olympiadId);
-    } catch {
-      toast.error('Не удалось сохранить оценку');
-    }
-  };
-
-  if (isLoading) return <Loader />;
-
-  const winners = participants.filter((item) => item.place && item.place <= 3);
+  const ungraded = queue.filter((item) => item.pointsEarned == null).length;
+  const sortedQueue = [...queue].sort((a, b) => Number(a.pointsEarned != null) - Number(b.pointsEarned != null));
 
   return (
-    <div className="space-y-6">
-      <Card className="rounded-[28px]">
-        <p className="text-sm uppercase tracking-[0.18em] text-[rgb(var(--primary))]">Итоги олимпиады</p>
-        <h1 className="mt-2 text-3xl font-extrabold">Победители и участники</h1>
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          {winners.length === 0 ? (
-            <p className="text-sm text-[rgb(var(--text-soft))]">Победители появятся после завершения и проверки попыток.</p>
-          ) : (
-            winners.map((winner) => (
-              <div key={winner.participationId} className="rounded-2xl border border-[rgb(var(--border))] p-4">
-                <Badge tone="success">{winner.place} место</Badge>
-                <p className="mt-3 font-bold">{winner.userName}</p>
-                <p className="text-sm text-[rgb(var(--text-soft))]">{winner.score} / {winner.maxPossibleScore}</p>
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
+    <>
+      <Link to="/dashboard" className="mb-4 inline-flex items-center gap-2 text-sm font-medium text-soft hover:text-fg">
+        <ArrowLeft className="h-4 w-4" />
+        {t('nav.olympiads')}
+      </Link>
+      <PageHeader
+        title={olympiad?.title ?? t('ranking.title')}
+        lead={`${t('ranking.title')} · ${t('common.participants', { count: participants.length })}`}
+        actions={
+          <ButtonLink to={`/admin/olympiads/${olympiadId}/proctoring`} variant="secondary">
+            <ShieldAlert className="h-4 w-4" />
+            {t('ranking.toProctoring')}
+          </ButtonLink>
+        }
+      />
 
-      <Card className="rounded-[28px]">
-        <h2 className="text-2xl font-extrabold">Все участники</h2>
-        <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-soft))]">
-              <tr>
-                <th className="border-b border-[rgb(var(--border))] px-3 py-3">Место</th>
-                <th className="border-b border-[rgb(var(--border))] px-3 py-3">Участник</th>
-                <th className="border-b border-[rgb(var(--border))] px-3 py-3">Баллы</th>
-                <th className="border-b border-[rgb(var(--border))] px-3 py-3">Завершил</th>
-                <th className="border-b border-[rgb(var(--border))] px-3 py-3">Статус</th>
-              </tr>
-            </thead>
-            <tbody>
-              {participants.map((participant) => (
-                <tr key={participant.participationId}>
-                  <td className="border-b border-[rgba(var(--border),0.6)] px-3 py-3">
-                    {participant.place ?? '-'}
-                  </td>
-                  <td className="border-b border-[rgba(var(--border),0.6)] px-3 py-3">
-                    <p className="font-semibold">{participant.userName}</p>
-                    <p className="text-xs text-[rgb(var(--text-soft))]">{participant.userEmail}</p>
-                  </td>
-                  <td className="border-b border-[rgba(var(--border),0.6)] px-3 py-3">
-                    {participant.score} / {participant.maxPossibleScore}
-                  </td>
-                  <td className="border-b border-[rgba(var(--border),0.6)] px-3 py-3">
-                    {participant.finishedAt ? formatDateTime(participant.finishedAt) : '-'}
-                  </td>
-                  <td className="border-b border-[rgba(var(--border),0.6)] px-3 py-3">
-                    <Badge tone={participant.pendingReview ? 'info' : participant.status === 'FINISHED' ? 'success' : 'warning'}>
-                      {participant.pendingReview ? 'На проверке' : participant.status}
-                    </Badge>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <Chips<Tab>
+        label={t('ranking.title')}
+        className="mb-5"
+        value={tab}
+        onChange={(value) => setParams(value === 'ranking' ? {} : { tab: value }, { replace: true })}
+        options={[
+          { value: 'ranking', label: t('ranking.tabRanking'), count: participants.length },
+          { value: 'review', label: t('ranking.tabReview'), count: ungraded },
+        ]}
+      />
 
-      <Card className="rounded-[28px]">
-        <h2 className="text-2xl font-extrabold">Ручная проверка</h2>
-        {reviewItems.length === 0 ? (
-          <p className="mt-4 text-sm text-[rgb(var(--text-soft))]">Ответов для ручной проверки пока нет.</p>
-        ) : (
-          <div className="mt-5 space-y-4">
-            {reviewItems.map((item) => (
-              <div key={item.answerId} className="rounded-2xl border border-[rgb(var(--border))] p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="font-bold">{item.userName}</p>
-                    <p className="text-sm text-[rgb(var(--text-soft))]">{item.questionText}</p>
-                  </div>
-                  <Badge tone={item.pointsEarned == null ? 'info' : 'success'}>
-                    {item.pointsEarned == null ? 'Не проверено' : `${item.pointsEarned} / ${item.maxPoints}`}
-                  </Badge>
-                </div>
-                <pre className="mt-4 whitespace-pre-wrap rounded-xl bg-[rgba(var(--surface-muted),0.75)] p-4 text-sm">
-                  {item.userAnswer || '-'}
-                </pre>
-                {item.files && item.files.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[rgb(var(--text-soft))]">
-                      Прикреплённые файлы
-                    </p>
-                    {item.files.map((file) => (
-                      <a
-                        key={file.id}
-                        href={file.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-3 rounded-xl border border-[rgb(var(--border))] p-3 text-sm transition hover:bg-[rgba(var(--surface-muted),0.5)]"
-                      >
-                        <span className="text-lg">
-                          {file.mimeType.startsWith('image/') ? '🖼️' : file.mimeType === 'application/pdf' ? '📄' : '📎'}
-                        </span>
-                        <span className="flex-1 truncate font-medium">{file.originalName}</span>
-                        <span className="text-xs text-[rgb(var(--text-soft))]">
-                          {file.size < 1024 * 1024
-                            ? (file.size / 1024).toFixed(1) + ' KB'
-                            : (file.size / (1024 * 1024)).toFixed(1) + ' MB'}
-                        </span>
-                      </a>
-                    ))}
-                  </div>
-                )}
-                <div className="mt-4 grid gap-3 md:grid-cols-[160px_1fr_auto] md:items-end">
-                  <div>
-                    <label className="mb-2 block text-sm font-semibold">Баллы</label>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={item.maxPoints}
-                      value={scores[item.answerId] ?? ''}
-                      onChange={(event) => setScores((current) => ({ ...current, [item.answerId]: event.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-semibold">Комментарий</label>
-                    <Textarea
-                      value={comments[item.answerId] ?? ''}
-                      onChange={(event) => setComments((current) => ({ ...current, [item.answerId]: event.target.value }))}
-                    />
-                  </div>
-                  <Button onClick={() => void handleReview(item)}>Сохранить</Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+      {tab === 'ranking' ? <RankingTable participants={participants} risk={risk} /> : <ReviewQueue items={sortedQueue} onGraded={load} />}
+    </>
+  );
+}
+
+function RankingTable({ participants, risk }: { participants: OlympiadParticipant[]; risk: Record<string, RiskLevel> }) {
+  const t = useT();
+  const navigate = useNavigate();
+  if (participants.length === 0) return <EmptyState title={t('ranking.empty')} />;
+
+  return (
+    <div className="overflow-hidden rounded-card border border-line bg-surface shadow-lift">
+      <div className="hidden grid-cols-[64px_minmax(0,1.3fr)_minmax(0,1.4fr)_120px_120px_130px] gap-x-3 bg-muted px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-soft md:grid">
+        <span>{t('ranking.place')}</span>
+        <span>{t('ranking.participant')}</span>
+        <span>{t('ranking.score')}</span>
+        <span>{t('proctoring.risk')}</span>
+        <span>{t('ranking.finished')}</span>
+        <span className="text-right">{t('ranking.status')}</span>
+      </div>
+      <ol>
+        {participants.map((row) => {
+          const level = risk[row.userEmail];
+          return (
+            <li key={row.participationId} className="border-t border-line/70 first:border-t-0 md:first:border-t">
+              <button
+                type="button"
+                onClick={() => navigate(`/results/${row.participationId}`)}
+                className="grid w-full grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-3.5 text-left transition-colors hover:bg-muted md:grid-cols-[64px_minmax(0,1.3fr)_minmax(0,1.4fr)_120px_120px_130px] md:px-5"
+              >
+                <span
+                  className={cn(
+                    'grid h-8 w-10 place-items-center rounded-[8px] font-mono text-sm font-semibold',
+                    row.place && row.place <= 3 ? 'bg-marker text-[#3A3000]' : 'text-soft',
+                  )}
+                >
+                  {row.place ? String(row.place).padStart(2, '0') : '—'}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate font-semibold">{row.userName}</span>
+                  <span className="block truncate text-xs text-soft">{row.userEmail}</span>
+                </span>
+                <span className="col-span-3 flex items-center gap-3 md:col-span-1">
+                  <span className="num w-[60px] font-serif text-lg font-semibold">
+                    {row.score}
+                    <span className="text-sm font-normal text-soft">/{row.maxPossibleScore}</span>
+                  </span>
+                  <ScoreBar value={row.score} max={row.maxPossibleScore} className="flex-1" />
+                </span>
+                <span className="col-start-3 row-start-1 md:col-start-auto md:row-start-auto">
+                  {level ? <RiskBadge level={level} /> : <span className="text-soft">—</span>}
+                </span>
+                <span className="hidden text-sm text-soft md:block">{formatShort(row.finishedAt)}</span>
+                <span className="col-span-3 flex items-center justify-between gap-2 text-sm text-soft md:col-span-1 md:justify-end">
+                  <span className="md:hidden">{formatShort(row.finishedAt)}</span>
+                  <AttemptStatusBadge status={row.status} />
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
     </div>
+  );
+}
+
+function ReviewQueue({ items, onGraded }: { items: ManualReviewItem[]; onGraded: () => Promise<void> }) {
+  const t = useT();
+  if (items.length === 0) return <EmptyState title={t('ranking.reviewEmpty')} />;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-soft">{t('ranking.reviewLead')}</p>
+      {items.map((item) => (
+        <ReviewCard key={item.answerId} item={item} onGraded={onGraded} />
+      ))}
+    </div>
+  );
+}
+
+function ReviewCard({ item, onGraded }: { item: ManualReviewItem; onGraded: () => Promise<void> }) {
+  const t = useT();
+  const [points, setPoints] = useState(item.pointsEarned != null ? String(item.pointsEarned) : '');
+  const [comment, setComment] = useState(item.reviewComment ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const graded = item.pointsEarned != null;
+
+  const save = async () => {
+    const value = Number(points);
+    if (points === '' || !Number.isInteger(value) || value < 0 || value > item.maxPoints) {
+      setError(t('ranking.gradeRange', { max: item.maxPoints }));
+      return;
+    }
+    try {
+      setSaving(true);
+      setError(null);
+      await reviewAnswer(item.answerId, { pointsEarned: value, reviewComment: comment.trim() || undefined });
+      toast.success(t('ranking.graded'));
+      await onGraded();
+    } catch (err) {
+      toast.error(errorMessage(err, 'errors.save'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <article className="rounded-card border border-line bg-surface p-5 shadow-lift sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-semibold">{item.userName}</p>
+          <p className="text-sm text-soft">{item.questionText}</p>
+        </div>
+        {graded ? (
+          <Badge tone="low">
+            {item.pointsEarned}/{item.maxPoints}
+          </Badge>
+        ) : (
+          <Badge tone="mid">{t('ranking.notGraded')}</Badge>
+        )}
+      </div>
+
+      <div className="mt-4 rounded-control bg-muted px-4 py-3">
+        <p className="label">{t('ranking.answer')}</p>
+        <p className={cn('mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words leading-relaxed', looksLikeCode(item.userAnswer) && 'font-mono text-[13px]')}>
+          {item.userAnswer || '—'}
+        </p>
+      </div>
+
+      {item.files && item.files.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {item.files.map((file) => (
+            <button
+              key={file.id}
+              type="button"
+              onClick={() => void downloadAttachment(file).catch((err) => toast.error(errorMessage(err)))}
+              className="inline-flex h-9 items-center gap-2 rounded-control border border-line px-3 text-sm font-medium hover:bg-muted"
+            >
+              <FileIcon mimeType={file.mimeType} className="text-soft" />
+              <span className="max-w-[220px] truncate">{file.originalName}</span>
+              <Download className="h-3.5 w-3.5 text-soft" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-5 grid gap-3 border-t border-line pt-5 md:grid-cols-[140px_1fr_auto] md:items-end">
+        <Field label={`${t('ranking.points')} (0–${item.maxPoints})`} htmlFor={`points-${item.answerId}`} error={error ?? undefined}>
+          <Input
+            id={`points-${item.answerId}`}
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={item.maxPoints}
+            value={points}
+            onChange={(event) => setPoints(event.target.value)}
+            aria-invalid={Boolean(error)}
+          />
+        </Field>
+        <Field label={t('ranking.comment')} htmlFor={`comment-${item.answerId}`}>
+          <Textarea
+            id={`comment-${item.answerId}`}
+            rows={1}
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
+            placeholder={t('ranking.commentPlaceholder')}
+            className="min-h-10"
+          />
+        </Field>
+        <Button onClick={() => void save()} loading={saving} variant={graded ? 'secondary' : 'primary'}>
+          {t('ranking.saveGrade')}
+        </Button>
+      </div>
+    </article>
   );
 }

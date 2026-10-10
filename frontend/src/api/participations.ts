@@ -1,5 +1,5 @@
 import { http } from './http';
-import type { AnswerDetail, ManualReviewItem, OlympiadParticipant, Participation, ParticipationResult } from '@/types';
+import type { Attempt, ManualReviewItem, OlympiadParticipant, ParticipationResult, SavedAnswer } from '@/types';
 
 interface SubmitAnswerPayload {
   participationId: string;
@@ -8,7 +8,7 @@ interface SubmitAnswerPayload {
 }
 
 export async function startParticipation(olympiadId: string) {
-  const { data } = await http.post<Participation>(`/participations/start/${olympiadId}`);
+  const { data } = await http.post<Attempt>(`/participations/start/${olympiadId}`);
   return data;
 }
 
@@ -17,32 +17,23 @@ export async function submitAnswer(payload: SubmitAnswerPayload) {
 }
 
 export async function finishParticipation(participationId: string) {
-  const { data } = await http.post<Participation>(`/participations/finish/${participationId}`);
+  const { data } = await http.post<Attempt>(`/participations/finish/${participationId}`);
+  return data;
+}
+
+export async function getMyAttempts() {
+  const { data } = await http.get<Attempt[]>('/participations/my');
+  return data;
+}
+
+export async function getSavedAnswers(participationId: string) {
+  const { data } = await http.get<SavedAnswer[]>(`/participations/${participationId}/answers`);
   return data;
 }
 
 export async function getParticipationResults(participationId: string) {
-  const { data } = await http.get<Participation & {
-    participationId?: string;
-    userEmail?: string;
-    totalScore?: number;
-    maxPossibleScore?: number;
-    place?: number;
-    pendingReview?: boolean;
-    answers?: AnswerDetail[];
-  }>(
-    `/participations/${participationId}/results`,
-  );
-  return {
-    ...data,
-    id: data.participationId ?? data.id ?? participationId,
-    userEmail: data.userEmail,
-    totalScore: data.totalScore ?? data.score ?? 0,
-    maxPossibleScore: data.maxPossibleScore ?? 0,
-    place: data.place,
-    pendingReview: data.pendingReview,
-    answers: data.answers ?? ([] as AnswerDetail[]),
-  } satisfies ParticipationResult;
+  const { data } = await http.get<ParticipationResult>(`/participations/${participationId}/results`);
+  return data;
 }
 
 export async function getOlympiadParticipants(olympiadId: string) {
@@ -56,6 +47,5 @@ export async function getManualReviewQueue(olympiadId: string) {
 }
 
 export async function reviewAnswer(answerId: string, payload: { pointsEarned: number; reviewComment?: string }) {
-  const { data } = await http.post(`/participations/answers/${answerId}/review`, payload);
-  return data;
+  await http.post(`/participations/answers/${answerId}/review`, payload);
 }

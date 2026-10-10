@@ -3,20 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Olympus Proctor</title>
+    <title>Olympus Proctor — онлайн-олимпиады с прокторингом</title>
     <meta
       name="description"
-      content="Платформа для онлайн-олимпиад с прокторингом, контролем попыток и удобным управлением олимпиадами."
+      content="Платформа для онлайн-олимпиад: индивидуальный таймер, прокторинг с камеры, запуск кода в песочнице, рейтинг и отчёт о рисках. Демо-вход в один клик."
     />
+    <meta name="theme-color" content="#ECEEE9" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Literata:opsz,wght@7..72,500;7..72,600;7..72,700&family=Onest:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+    <script>
+      try {
+        var t = localStorage.getItem('olympus_theme');
+        if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        }
+        var l = localStorage.getItem('olympus_locale');
+        if (l === 'en') document.documentElement.lang = 'en';
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
-  </html>
+</html>

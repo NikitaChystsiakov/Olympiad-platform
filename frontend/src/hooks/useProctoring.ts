@@ -1,62 +1,76 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { sendProctoringEvent } from '@/api/proctoring';
-import type { LocalProctoringEntry, User } from '@/types';
-import { saveLocalProctoringEvent } from '@/utils/localHistory';
+import type { ProctoringEventType } from '@/types';
 
-interface UseProctoringOptions {
-  olympiadId: string;
-  enabled: boolean;
-  user: User | null;
+/** Fire-and-forget: a lost event must never break the attempt. */
+export function reportProctoringEvent(olympiadId: string, eventType: ProctoringEventType, metadata: string) {
+  void sendProctoringEvent({ olympiadId, eventType, metadata }).catch(() => undefined);
 }
 
-export function useProctoring({ olympiadId, enabled, user }: UseProctoringOptions) {
+interface BrowserSignals {
+  tabSwitches: number;
+  isFullscreen: boolean;
+}
+
+/** Tab visibility, fullscreen and clipboard paste during an attempt. */
+export function useBrowserProctoring(olympiadId: string, enabled: boolean): BrowserSignals {
+  const [tabSwitches, setTabSwitches] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(() => Boolean(document.fullscreenElement));
+  const lastPasteAt = useRef(0);
+
   useEffect(() => {
     if (!enabled || !olympiadId) return;
 
-    let active = true;
-
-    const emit = (eventType: LocalProctoringEntry['eventType'], metadata: string) => {
-      if (!active) return;
-
-      const payload = {
-        olympiadId,
-        eventType: eventType as 'TAB_SWITCH' | 'FULLSCREEN_EXIT' | 'FACE_MISSING' | 'SUSPICIOUS_FLAG',
-        metadata,
-      };
-
-      saveLocalProctoringEvent({
-        id: crypto.randomUUID(),
-        olympiadId,
-        userEmail: user?.email ?? 'unknown',
-        userName: user?.fullName ?? 'Неизвестный участник',
-        eventType,
-        metadata,
-        createdAt: new Date().toISOString(),
-        isFlagged: eventType !== 'TAB_SWITCH',
-      });
-
-      void sendProctoringEvent(payload).catch(() => undefined);
-    };
-
-    const handleVisibilityChange = () => {
+    const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        emit('TAB_SWITCH', 'Пользователь переключил вкладку');
+        setTabSwitches((count) => count + 1);
+        reportProctoringEvent(olympiadId, 'TAB_SWITCH', 'Пользователь переключил вкладку');
       }
     };
 
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement) {
-        emit('FULLSCREEN_EXIT', 'Пользователь вышел из полноэкранного режима');
+    const onFullscreen = () => {
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      if (!active) {
+        reportProctoringEvent(olympiadId, 'FULLSCREEN_EXIT', 'Выход из полноэкранного режима');
       }
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    const onPaste = (event: ClipboardEvent) => {
+      const length = event.clipboardData?.getData('text')?.length ?? 0;
+      // Short pastes (a variable name) are noise; also collapse bursts into one event.
+      if (length < 20 || Date.now() - lastPasteAt.current < 10_000) return;
+      lastPasteAt.current = Date.now();
+      reportProctoringEvent(olympiadId, 'COPY_PASTE', `Вставка из буфера обмена: ${length} символов`);
+    };
 
+    document.addEventListener('visibilitychange', onVisibility);
+    document.addEventListener('fullscreenchange', onFullscreen);
+    document.addEventListener('paste', onPaste);
     return () => {
-      active = false;
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('fullscreenchange', onFullscreen);
+      document.removeEventListener('paste', onPaste);
     };
-  }, [enabled, olympiadId, user?.email, user?.fullName]);
+  }, [enabled, olympiadId]);
+
+  return { tabSwitches, isFullscreen };
+}
+
+export async function enterFullscreen() {
+  if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+  try {
+    await document.documentElement.requestFullscreen();
+  } catch {
+    // The browser may refuse (iframe, iOS Safari). The attempt still works.
+  }
+}
+
+export async function exitFullscreen() {
+  if (!document.fullscreenElement) return;
+  try {
+    await document.exitFullscreen();
+  } catch {
+    // Already closing.
+  }
 }

@@ -1,176 +1,177 @@
+import { ArrowLeft, MessageSquareText } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
-import { useParams } from 'react-router-dom';
-import { toast } from 'sonner';
+import { Link, useParams } from 'react-router-dom';
+import { errorMessage } from '@/api/http';
 import { getParticipationResults } from '@/api/participations';
-import { Badge } from '@/components/ui/Badge';
-import { Card } from '@/components/ui/Card';
+import { useT } from '@/i18n';
+import { useAuthStore } from '@/store/authStore';
+import type { AnswerDetail, ParticipationResult } from '@/types';
+import { cn } from '@/utils/cn';
+import { formatAnswer, formatDateTime } from '@/utils/format';
+import { AttemptStatusBadge } from '@/components/domain/StatusBadges';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Loader } from '@/components/ui/Loader';
-import { useParticipationStore } from '@/store/participationStore';
-import type { ParticipationResult } from '@/types';
-import { formatDateTime } from '@/utils/format';
-import { readLocalResults } from '@/utils/localHistory';
+import { ScoreBar } from '@/components/ui/ScoreBar';
+import { PageSkeleton } from '@/components/ui/Skeleton';
+
+type Verdict = 'correct' | 'wrong' | 'partial' | 'pending' | 'empty';
+
+function verdictOf(answer: AnswerDetail): Verdict {
+  if (answer.pendingReview) return 'pending';
+  if (!answer.userAnswer?.trim()) return 'empty';
+  if (answer.isCorrect) return 'correct';
+  if (answer.pointsEarned > 0) return 'partial';
+  return 'wrong';
+}
+
+const verdictTone: Record<Verdict, BadgeTone> = {
+  correct: 'low',
+  wrong: 'high',
+  partial: 'mid',
+  pending: 'neutral',
+  empty: 'neutral',
+};
 
 export function ResultsPage() {
-  const { participationId } = useParams();
-  const { result: storedResult, setResult } = useParticipationStore();
-  const initialResult = storedResult?.id === participationId ? storedResult : null;
-  const [result, setLocalResult] = useState<ParticipationResult | null>(initialResult);
-  const [isLoading, setIsLoading] = useState(!initialResult);
+  const t = useT();
+  const { participationId = '' } = useParams();
+  const user = useAuthStore((state) => state.user);
+  const [result, setResult] = useState<ParticipationResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!participationId) return;
-    if (storedResult?.id === participationId) return;
+    let cancelled = false;
+    setLoading(true);
+    getParticipationResults(participationId)
+      .then((data) => !cancelled && setResult(data))
+      .catch((err) => !cancelled && setError(errorMessage(err, 'errors.load')))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [participationId]);
 
-    void (async () => {
-      try {
-        setIsLoading(true);
-        const serverResult = await getParticipationResults(participationId);
-        const localMatch = readLocalResults().find((entry) => entry.id === participationId);
-        const merged = mergeServerAndLocalResults(serverResult, localMatch);
-        setResult(merged);
-        setLocalResult(merged);
-      } catch {
-        const fallback = readLocalResults().find((entry) => entry.id === participationId) ?? null;
-        if (!fallback) {
-          toast.error('Не удалось загрузить результат');
-        }
-        setLocalResult(fallback);
-      } finally {
-        setIsLoading(false);
-      }
-    })();
-  }, [participationId, setResult, storedResult]);
+  if (loading) return <PageSkeleton />;
 
-  if (isLoading) return <Loader />;
   if (!result) {
     return (
       <EmptyState
-        title="Результат пока недоступен"
-        description="Не удалось получить данные попытки. Попробуйте открыть результат позже."
+        title={t('results.unavailable')}
+        text={error ?? t('results.unavailableText')}
+        action={<ButtonLink to="/dashboard">{t('results.toList')}</ButtonLink>}
       />
     );
   }
 
-  const solved = result.totalScore;
-  const remaining = Math.max(result.maxPossibleScore - solved, 0);
-  const percent = result.maxPossibleScore > 0 ? Math.round((solved / result.maxPossibleScore) * 100) : 0;
+  const isOwner = user?.email === result.userEmail;
+  const backTo = isOwner ? '/dashboard' : `/admin/olympiads/${result.olympiadId}/results`;
+  const percent = result.maxPossibleScore > 0 ? Math.round((result.totalScore / result.maxPossibleScore) * 100) : 0;
 
   return (
-    <div className="space-y-6">
-      <Card className="grid gap-6 rounded-[28px] lg:grid-cols-[1fr_280px] lg:items-center">
+    <div className="space-y-8">
+      <div>
+        <Link to={backTo} className="inline-flex items-center gap-2 text-sm font-medium text-soft hover:text-fg">
+          <ArrowLeft className="h-4 w-4" />
+          {isOwner ? t('results.toList') : t('ranking.title')}
+        </Link>
+        <h1 className="mt-4 font-serif text-[28px] font-semibold leading-tight tracking-[-0.02em] sm:text-[36px]">{result.olympiadTitle}</h1>
+        <p className="mt-2 flex flex-wrap items-center gap-2 text-soft">
+          {!isOwner && <span className="font-medium text-fg">{result.userName}</span>}
+          <AttemptStatusBadge status={result.status} />
+          {t('results.finishedAt', { date: formatDateTime(result.finishedAt ?? result.startedAt) })}
+        </p>
+      </div>
+
+      <section className="grid gap-6 rounded-card border border-line bg-surface p-6 shadow-lift sm:p-8 md:grid-cols-[auto_1fr] md:items-center md:gap-12">
         <div>
-          <p className="text-sm uppercase tracking-[0.18em] text-[rgb(var(--primary))]">Результаты</p>
-          <h1 className="mt-2 text-3xl font-extrabold">{result.olympiadTitle}</h1>
-          <p className="mt-3 text-sm text-[rgb(var(--text-soft))]">
-            Попытка завершена: {formatDateTime(result.finishedAt ?? result.startedAt)}
+          <p className="label">{t('results.score')}</p>
+          <p className="num mt-1 font-serif text-[64px] font-semibold leading-none tracking-[-0.03em] sm:text-[80px]">
+            {result.totalScore}
+            <span className="text-[0.45em] font-medium text-soft"> / {result.maxPossibleScore}</span>
           </p>
-          <div className="mt-6 flex flex-wrap items-center gap-4">
-            <div>
-              <p className="text-sm text-[rgb(var(--text-soft))]">Итоговый балл</p>
-              <p className="text-4xl font-extrabold">
-                {result.totalScore} / {result.maxPossibleScore}
-              </p>
-            </div>
-            <Badge tone={percent >= 60 ? 'success' : 'warning'}>{percent}% выполнения</Badge>
-            {result.pendingReview && <Badge tone="info">Ожидает проверки</Badge>}
-            {!result.pendingReview && result.place && <Badge tone="success">{result.place} место</Badge>}
-          </div>
-          {result.pendingReview && (
-            <p className="mt-4 rounded-2xl bg-[rgba(var(--surface-muted),0.75)] p-4 text-sm leading-6 text-[rgb(var(--text-soft))]">
-              Решение передано организаторам. Итоговый балл и место появятся после ручной проверки задач.
-            </p>
-          )}
-          <div className="mt-6 h-3 overflow-hidden rounded-full bg-[rgba(var(--surface-muted),0.9)]">
-            <div className="h-full rounded-full bg-[rgb(var(--primary))]" style={{ width: `${percent}%` }} />
-          </div>
         </div>
-
-        <div className="h-60">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={[
-                  { name: 'Баллы', value: solved },
-                  { name: 'Осталось', value: remaining },
-                ]}
-                dataKey="value"
-                innerRadius={68}
-                outerRadius={100}
-              >
-                <Cell fill="rgb(var(--primary))" />
-                <Cell fill="rgba(var(--surface-muted),0.9)" />
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
-
-      <Card className="rounded-[28px]">
-        <h2 className="text-2xl font-extrabold">Детали по вопросам</h2>
-        {result.answers.length === 0 ? (
-          <p className="mt-4 text-sm leading-7 text-[rgb(var(--text-soft))]">
-            По этой попытке пока нет сохраненных ответов.
-          </p>
-        ) : (
-          <div className="mt-6 space-y-4">
-            {result.answers.map((answer, index) => (
-              <div
-                key={answer.questionId}
-                className="rounded-2xl border border-[rgb(var(--border))] bg-[rgba(var(--surface),0.65)] p-5"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <h3 className="text-lg font-bold">
-                    {index + 1}. {answer.questionText}
-                  </h3>
-                  <Badge tone={answer.pendingReview ? 'info' : answer.isCorrect ? 'success' : 'warning'}>
-                    {answer.pendingReview ? 'На проверке' : `${answer.pointsEarned} / ${answer.maxPoints ?? 0} балл.`}
-                  </Badge>
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <AnswerBlock label="Ваш ответ" value={answer.userAnswer} />
-                  <AnswerBlock label="Правильный ответ" value={answer.correctAnswer} />
-                </div>
-              </div>
-            ))}
+        <div className="space-y-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="num font-mono text-sm font-semibold">{percent}%</span>
+            {result.place && !result.pendingReview && (
+              <Badge tone="marker" className="text-sm">
+                {t('results.placeShort', { place: result.place })}
+              </Badge>
+            )}
           </div>
-        )}
-      </Card>
+          <ScoreBar value={result.totalScore} max={result.maxPossibleScore} tone="accent" className="h-4" />
+          {result.pendingReview && <p className="text-sm text-soft">{t('results.pending')}</p>}
+        </div>
+      </section>
+
+      <section aria-labelledby="breakdown">
+        <h2 id="breakdown" className="mb-4 font-serif text-2xl font-semibold">
+          {t('results.breakdown')}
+        </h2>
+        <ol className="space-y-3">
+          {result.answers.map((answer, index) => {
+            const verdict = verdictOf(answer);
+            const manual = answer.questionType === 'MANUAL_REVIEW' || answer.questionType === 'CODE';
+            const isCode = answer.questionType === 'CODE';
+            return (
+              <li key={answer.questionId} className="rounded-card border border-line bg-surface p-5 sm:p-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex min-w-0 gap-3">
+                    <span
+                      className={cn(
+                        'grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold',
+                        verdict === 'correct' && 'bg-risk-low-bg text-risk-low',
+                        verdict === 'wrong' && 'bg-risk-high-bg text-risk-high',
+                        verdict === 'partial' && 'bg-risk-mid-bg text-risk-mid',
+                        (verdict === 'pending' || verdict === 'empty') && 'bg-muted text-soft',
+                      )}
+                    >
+                      {index + 1}
+                    </span>
+                    <p className="pt-1 font-medium leading-snug">{answer.questionText}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 pl-11 sm:pl-0">
+                    <Badge tone={verdictTone[verdict]}>{t(`results.verdict.${verdict}`)}</Badge>
+                    <span className="num font-mono text-sm font-semibold">
+                      {verdict === 'pending' ? '—' : answer.pointsEarned}/{answer.maxPoints}
+                    </span>
+                  </div>
+                </div>
+
+                <div className={cn('mt-4 grid gap-3 pl-11', !manual && answer.correctAnswer && 'md:grid-cols-2')}>
+                  <AnswerBox label={t('results.yourAnswer')} value={formatAnswer(answer.userAnswer)} empty={t('results.noAnswer')} mono={isCode} />
+                  {!manual && answer.correctAnswer && <AnswerBox label={t('results.correctAnswer')} value={formatAnswer(answer.correctAnswer)} />}
+                </div>
+
+                {answer.reviewComment && (
+                  <div className="mt-3 ml-11 flex gap-3 rounded-control bg-accent-soft px-4 py-3 text-sm">
+                    <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+                    <div>
+                      <p className="font-semibold">{t('results.reviewer')}</p>
+                      <p className="mt-0.5">{answer.reviewComment}</p>
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      </section>
     </div>
   );
 }
 
-function AnswerBlock({ label, value }: { label: string; value?: string }) {
+function AnswerBox({ label, value, empty, mono }: { label: string; value: string; empty?: string; mono?: boolean }) {
   return (
-    <div className="rounded-xl bg-[rgba(var(--surface-muted),0.7)] p-4">
-      <p className="text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-soft))]">{label}</p>
-      <p className="mt-2 whitespace-pre-wrap text-sm font-semibold">{formatAnswerValue(value)}</p>
+    <div className="rounded-control bg-muted px-4 py-3">
+      <p className="label">{label}</p>
+      {value ? (
+        <p className={cn('mt-1 whitespace-pre-wrap break-words', mono ? 'max-h-64 overflow-auto font-mono text-[13px]' : 'font-medium')}>{value}</p>
+      ) : (
+        <p className="mt-1 text-soft">{empty}</p>
+      )}
     </div>
   );
-}
-
-function formatAnswerValue(value?: string) {
-  if (!value) return '-';
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) return parsed.join(', ');
-  } catch {
-    // Plain text answer.
-  }
-  return value.split('|').join(', ');
-}
-
-function mergeServerAndLocalResults(serverResult: ParticipationResult, localResult?: ParticipationResult) {
-  if (!localResult) return serverResult;
-  if (serverResult.answers.length === 0) return localResult;
-
-  const localAnswersByQuestionId = new Map(localResult.answers.map((answer) => [answer.questionId, answer]));
-  return {
-    ...serverResult,
-    answers: serverResult.answers.map((answer) => ({
-      ...answer,
-      userAnswer: answer.userAnswer || localAnswersByQuestionId.get(answer.questionId)?.userAnswer || '',
-    })),
-  };
 }

@@ -1,16 +1,12 @@
-import { FileSearch } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { cn } from '@/utils/cn';
 
-interface EmptyStateProps {
-  title: string;
-  description: string;
-}
-
-export function EmptyState({ title, description }: EmptyStateProps) {
+export function EmptyState({ title, text, action, className }: { title: string; text?: ReactNode; action?: ReactNode; className?: string }) {
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center rounded-2xl border border-dashed border-[rgb(var(--border))] bg-[rgba(var(--surface),0.55)] p-8 text-center">
-      <FileSearch className="mb-4 h-10 w-10 text-[rgb(var(--text-soft))]" />
-      <h3 className="text-lg font-bold">{title}</h3>
-      <p className="mt-2 max-w-md text-sm text-[rgb(var(--text-soft))]">{description}</p>
+    <div className={cn('flex flex-col items-start gap-2 rounded-card border border-dashed border-line px-6 py-10', className)}>
+      <p className="font-serif text-xl font-semibold">{title}</p>
+      {text && <p className="max-w-[60ch] text-soft">{text}</p>}
+      {action && <div className="pt-2">{action}</div>}
     </div>
   );
 }

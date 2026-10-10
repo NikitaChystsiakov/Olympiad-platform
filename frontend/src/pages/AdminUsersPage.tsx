@@ -1,250 +1,311 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { errorMessage } from '@/api/http';
 import { createUser, deleteUser, getUsers, updateUser } from '@/api/users';
-import { Badge } from '@/components/ui/Badge';
+import { useT } from '@/i18n';
+import { useAuthStore } from '@/store/authStore';
+import type { AdminUserPayload, PageResponse, User, UserRole } from '@/types';
+import { cn } from '@/utils/cn';
+import { formatDate } from '@/utils/format';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import { Chips } from '@/components/ui/Chips';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
-import { Loader } from '@/components/ui/Loader';
-import { Select } from '@/components/ui/Select';
-import type { AdminUserPayload, User, UserRole } from '@/types';
+import { Field, Input, Select } from '@/components/ui/Field';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 
-const emptyForm: AdminUserPayload = {
-  email: '',
-  password: '',
-  fullName: '',
-  role: 'STUDENT',
-  active: true,
-};
+const ROLES: UserRole[] = ['STUDENT', 'ORGANIZER', 'ADMIN'];
+const roleTone: Record<UserRole, BadgeTone> = { STUDENT: 'neutral', ORGANIZER: 'accent', ADMIN: 'ink' };
+const PAGE_SIZE = 20;
+
+type EditorState = { mode: 'create' } | { mode: 'edit'; user: User } | null;
 
 export function AdminUsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [search, setSearch] = useState('');
+  const t = useT();
+  const me = useAuthStore((state) => state.user);
   const [role, setRole] = useState<UserRole | ''>('');
+  const [searchDraft, setSearchDraft] = useState('');
+  const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<AdminUserPayload>(emptyForm);
-
-  const isEditing = useMemo(() => Boolean(editingId), [editingId]);
+  const [data, setData] = useState<PageResponse<User> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editor, setEditor] = useState<EditorState>(null);
+  const [toDelete, setToDelete] = useState<User | null>(null);
 
   useEffect(() => {
-    void loadUsers();
-  }, [page, role]);
+    const timer = window.setTimeout(() => {
+      setSearch(searchDraft.trim());
+      setPage(0);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft]);
 
-  const loadUsers = async () => {
+  const load = useCallback(async () => {
     try {
-      setIsLoading(true);
-      const data = await getUsers({ page, size: 10, search: search.trim(), role });
-      setUsers(data.content);
-      setTotalPages(data.totalPages || 1);
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Не удалось загрузить пользователей');
+      setLoading(true);
+      setData(await getUsers({ page, size: PAGE_SIZE, role, search: search || undefined }));
+    } catch (error) {
+      toast.error(errorMessage(error, 'errors.load'));
     } finally {
-      setIsLoading(false);
+      setLoading(false);
+    }
+  }, [page, role, search]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const remove = async () => {
+    if (!toDelete) return;
+    try {
+      await deleteUser(toDelete.id);
+      toast.success(t('users.deleted'));
+      setToDelete(null);
+      await load();
+    } catch (error) {
+      toast.error(errorMessage(error));
     }
   };
 
-  const resetForm = () => {
-    setEditingId(null);
-    setForm(emptyForm);
-  };
+  const users = data?.content ?? [];
 
-  const startEdit = (user: User) => {
-    setEditingId(user.id);
-    setForm({
-      email: user.email,
-      password: '',
-      fullName: user.fullName,
-      role: user.role,
-      active: user.active ?? true,
-    });
-  };
+  return (
+    <>
+      <PageHeader
+        title={t('users.title')}
+        lead={t('users.lead')}
+        actions={
+          <Button onClick={() => setEditor({ mode: 'create' })}>
+            <Plus className="h-4 w-4" />
+            {t('users.create')}
+          </Button>
+        }
+      />
 
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
+      {editor && (
+        <UserEditor
+          key={editor.mode === 'edit' ? editor.user.id : 'new'}
+          state={editor}
+          isSelf={editor.mode === 'edit' && editor.user.email === me?.email}
+          onClose={() => setEditor(null)}
+          onSaved={async () => {
+            setEditor(null);
+            await load();
+          }}
+        />
+      )}
+
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <Chips<UserRole | ''>
+          label={t('common.role')}
+          value={role}
+          onChange={(value) => {
+            setRole(value);
+            setPage(0);
+          }}
+          options={[{ value: '', label: t('common.all') }, ...ROLES.map((item) => ({ value: item, label: t(`roles.${item}`) }))]}
+        />
+        <label className="relative block md:w-72">
+          <span className="sr-only">{t('common.search')}</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-soft" />
+          <Input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder={t('users.searchPlaceholder')} className="bg-surface pl-9" />
+        </label>
+      </div>
+
+      {loading && !data ? (
+        <Skeleton className="h-80 w-full rounded-card" />
+      ) : users.length === 0 ? (
+        <EmptyState title={t('users.empty')} />
+      ) : (
+        <div className={cn('overflow-hidden rounded-card border border-line bg-surface shadow-lift transition-opacity', loading && 'opacity-60')}>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="bg-muted">
+                <tr className="text-[11px] font-semibold uppercase tracking-[0.08em] text-soft">
+                  <th className="px-5 py-3">{t('common.fullName')}</th>
+                  <th className="px-3 py-3">{t('common.role')}</th>
+                  <th className="px-3 py-3">{t('common.status')}</th>
+                  <th className="px-3 py-3">{t('users.created')}</th>
+                  <th className="px-5 py-3 text-right">
+                    <span className="sr-only">{t('common.actions')}</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((user) => {
+                  const isSelf = user.email === me?.email;
+                  return (
+                    <tr key={user.id} className="border-t border-line/70">
+                      <td className="px-5 py-3">
+                        <p className="font-semibold">
+                          {user.fullName}
+                          {isSelf && <span className="ml-2 text-xs font-medium text-soft">({t('users.you')})</span>}
+                        </p>
+                        <p className="text-xs text-soft">{user.email}</p>
+                      </td>
+                      <td className="px-3 py-3">
+                        <Badge tone={roleTone[user.role]}>{t(`roles.${user.role}`)}</Badge>
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={cn('inline-flex items-center gap-2 font-medium', user.active ? 'text-risk-low' : 'text-risk-high')}>
+                          <span className="h-2 w-2 rounded-full bg-current" />
+                          {user.active ? t('users.active') : t('users.blocked')}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-soft">{formatDate(user.createdAt)}</td>
+                      <td className="px-5 py-3">
+                        <div className="flex justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditor({ mode: 'edit', user })}
+                            aria-label={t('common.edit')}
+                            className="grid h-9 w-9 place-items-center rounded-control text-soft hover:bg-fg/[0.06] hover:text-fg"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSelf}
+                            onClick={() => setToDelete(user)}
+                            aria-label={t('common.delete')}
+                            className="grid h-9 w-9 place-items-center rounded-control text-soft hover:bg-risk-high-bg hover:text-risk-high disabled:pointer-events-none disabled:opacity-30"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {data && data.totalPages > 1 && (
+        <nav className="mt-6 flex items-center justify-between" aria-label="pagination">
+          <span className="text-sm text-soft">{t('common.page', { page: page + 1, total: data.totalPages })}</span>
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" disabled={page === 0} onClick={() => setPage(page - 1)}>
+              {t('common.prev')}
+            </Button>
+            <Button variant="secondary" size="sm" disabled={page + 1 >= data.totalPages} onClick={() => setPage(page + 1)}>
+              {t('common.nextPage')}
+            </Button>
+          </div>
+        </nav>
+      )}
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        title={t('common.delete')}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        tone="danger"
+        onConfirm={() => void remove()}
+        onCancel={() => setToDelete(null)}
+      >
+        {toDelete && t('users.deleteConfirm', { name: toDelete.fullName })}
+      </ConfirmDialog>
+    </>
+  );
+}
+
+function UserEditor({ state, isSelf, onClose, onSaved }: { state: NonNullable<EditorState>; isSelf: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
+  const t = useT();
+  const editing = state.mode === 'edit' ? state.user : null;
+  const [form, setForm] = useState<Required<AdminUserPayload>>({
+    fullName: editing?.fullName ?? '',
+    email: editing?.email ?? '',
+    password: '',
+    role: editing?.role ?? 'STUDENT',
+    active: editing?.active ?? true,
+  });
+  const [errors, setErrors] = useState<Partial<Record<'fullName' | 'email' | 'password', string>>>({});
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    const next: typeof errors = {};
+    if (form.fullName.trim().length < 2) next.fullName = t('auth.nameShort');
+    if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) next.email = t('auth.emailInvalid');
+    if ((!editing || form.password) && form.password.length < 6) next.password = t('auth.passwordShort');
+    setErrors(next);
+    if (Object.keys(next).length) return;
+
+    const payload: AdminUserPayload = {
+      fullName: form.fullName.trim(),
+      email: form.email.trim(),
+      role: form.role,
+      active: form.active,
+      ...(form.password ? { password: form.password } : {}),
+    };
     try {
-      setIsSaving(true);
-      const payload = { ...form };
-      if (isEditing && !payload.password) {
-        delete payload.password;
-      }
-      if (editingId) {
-        await updateUser(editingId, payload);
-        toast.success('Пользователь обновлен');
-      } else {
-        await createUser(payload);
-        toast.success('Пользователь создан');
-      }
-      resetForm();
-      await loadUsers();
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Не удалось сохранить пользователя');
+      setSaving(true);
+      if (editing) await updateUser(editing.id, payload);
+      else await createUser(payload);
+      toast.success(t('users.saved'));
+      await onSaved();
+    } catch (error) {
+      toast.error(errorMessage(error, 'errors.save'));
     } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleDelete = async (user: User) => {
-    if (!window.confirm(`Удалить пользователя ${user.email}?`)) return;
-    try {
-      await deleteUser(user.id);
-      toast.success('Пользователь удален');
-      await loadUsers();
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Не удалось удалить пользователя');
+      setSaving(false);
     }
   };
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
-      <Card className="h-fit rounded-[18px]">
-        <h1 className="text-2xl font-extrabold">Пользователи</h1>
-        <p className="mt-2 text-sm text-[rgb(var(--text-soft))]">
-          Управление аккаунтами и ролями доступно только администраторам.
-        </p>
-
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+    <section className="mb-6 animate-rise rounded-card border border-accent/40 bg-surface p-5 shadow-lift sm:p-6" aria-label={editing ? t('users.editTitle', { name: editing.fullName }) : t('users.newTitle')}>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="font-serif text-xl font-semibold">{editing ? t('users.editTitle', { name: editing.fullName }) : t('users.newTitle')}</h2>
+        <button type="button" onClick={onClose} aria-label={t('common.close')} className="grid h-9 w-9 place-items-center rounded-control text-soft hover:bg-fg/[0.06] hover:text-fg">
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label={t('common.fullName')} htmlFor="u-name" error={errors.fullName}>
+          <Input id="u-name" value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} aria-invalid={Boolean(errors.fullName)} />
+        </Field>
+        <Field label={t('common.email')} htmlFor="u-email" error={errors.email}>
+          <Input id="u-email" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} aria-invalid={Boolean(errors.email)} />
+        </Field>
+        <Field label={t('common.password')} htmlFor="u-password" hint={editing ? t('users.passwordHint') : undefined} error={errors.password}>
           <Input
-            value={form.email ?? ''}
-            onChange={(event) => setForm({ ...form, email: event.target.value })}
-            placeholder="Email"
-            type="email"
-            required={!isEditing}
-          />
-          <Input
-            value={form.fullName ?? ''}
-            onChange={(event) => setForm({ ...form, fullName: event.target.value })}
-            placeholder="ФИО"
-            required={!isEditing}
-          />
-          <Input
-            value={form.password ?? ''}
-            onChange={(event) => setForm({ ...form, password: event.target.value })}
-            placeholder={isEditing ? 'Новый пароль, если нужно' : 'Пароль'}
+            id="u-password"
             type="password"
-            minLength={6}
-            required={!isEditing}
+            autoComplete="new-password"
+            value={form.password}
+            onChange={(event) => setForm({ ...form, password: event.target.value })}
+            aria-invalid={Boolean(errors.password)}
           />
-          <Select
-            value={form.role ?? 'STUDENT'}
-            onChange={(event) => setForm({ ...form, role: event.target.value as UserRole })}
-          >
-            <option value="STUDENT">STUDENT</option>
-            <option value="ORGANIZER">ORGANIZER</option>
-            <option value="ADMIN">ADMIN</option>
+        </Field>
+        <Field label={t('common.role')} htmlFor="u-role">
+          <Select id="u-role" value={form.role} disabled={isSelf} onChange={(event) => setForm({ ...form, role: event.target.value as UserRole })}>
+            {ROLES.map((item) => (
+              <option key={item} value={item}>
+                {t(`roles.${item}`)}
+              </option>
+            ))}
           </Select>
-          <label className="flex items-center gap-3 rounded-xl border border-[rgb(var(--border))] px-4 py-3 text-sm font-semibold">
-            <input
-              type="checkbox"
-              checked={form.active ?? true}
-              onChange={(event) => setForm({ ...form, active: event.target.checked })}
-            />
-            Активен
-          </label>
-          <div className="flex gap-2">
-            <Button type="submit" disabled={isSaving} className="flex-1">
-              {isEditing ? 'Сохранить' : 'Добавить'}
-            </Button>
-            {isEditing && (
-              <Button type="button" variant="secondary" onClick={resetForm}>
-                Отмена
-              </Button>
-            )}
-          </div>
-        </form>
-      </Card>
-
-      <Card className="rounded-[18px]">
-        <div className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Поиск по email или ФИО"
-          />
-          <Select value={role} onChange={(event) => setRole(event.target.value as UserRole | '')}>
-            <option value="">Все роли</option>
-            <option value="STUDENT">STUDENT</option>
-            <option value="ORGANIZER">ORGANIZER</option>
-            <option value="ADMIN">ADMIN</option>
-          </Select>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => {
-              setPage(0);
-              void loadUsers();
-            }}
-          >
-            Найти
+        </Field>
+      </div>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-5">
+        <label className={cn('inline-flex cursor-pointer items-center gap-3', isSelf && 'pointer-events-none opacity-50')}>
+          <input type="checkbox" checked={form.active} disabled={isSelf} onChange={(event) => setForm({ ...form, active: event.target.checked })} className="peer sr-only" />
+          <span className="relative h-6 w-11 rounded-full bg-fg/15 transition-colors peer-checked:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5" />
+          <span className="text-sm font-medium">{t('users.activeLabel')}</span>
+        </label>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={() => void submit()} loading={saving}>
+            {t('common.save')}
           </Button>
         </div>
-
-        <div className="mt-6 overflow-x-auto">
-          {isLoading ? (
-            <Loader />
-          ) : users.length === 0 ? (
-            <EmptyState title="Пользователи не найдены" description="Измените фильтры или добавьте нового пользователя." />
-          ) : (
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="border-b border-[rgb(var(--border))] text-xs uppercase tracking-[0.12em] text-[rgb(var(--text-soft))]">
-                <tr>
-                  <th className="py-3">Пользователь</th>
-                  <th className="py-3">Роль</th>
-                  <th className="py-3">Статус</th>
-                  <th className="py-3 text-right">Действия</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((user) => (
-                  <tr key={user.id} className="border-b border-[rgba(var(--border),0.45)]">
-                    <td className="py-4">
-                      <p className="font-semibold">{user.fullName}</p>
-                      <p className="text-[rgb(var(--text-soft))]">{user.email}</p>
-                    </td>
-                    <td className="py-4">
-                      <Badge tone={user.role === 'ADMIN' ? 'danger' : user.role === 'ORGANIZER' ? 'warning' : 'success'}>
-                        {user.role}
-                      </Badge>
-                    </td>
-                    <td className="py-4">{user.active === false ? 'Отключен' : 'Активен'}</td>
-                    <td className="py-4">
-                      <div className="flex justify-end gap-2">
-                        <Button type="button" variant="secondary" onClick={() => startEdit(user)}>
-                          Изменить
-                        </Button>
-                        <Button type="button" variant="danger" onClick={() => void handleDelete(user)}>
-                          Удалить
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <Button type="button" variant="secondary" disabled={page === 0} onClick={() => setPage((value) => value - 1)}>
-            Назад
-          </Button>
-          <span className="text-sm text-[rgb(var(--text-soft))]">
-            {page + 1} / {totalPages}
-          </span>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={page + 1 >= totalPages}
-            onClick={() => setPage((value) => value + 1)}
-          >
-            Вперед
-          </Button>
-        </div>
-      </Card>
-    </div>
+      </div>
+    </section>
   );
 }

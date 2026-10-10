@@ -1,22 +1,21 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/utils/cn';
 
-interface BadgeProps {
-  children: ReactNode;
-  tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info';
-}
+export type BadgeTone = 'neutral' | 'accent' | 'marker' | 'ink' | 'high' | 'mid' | 'low';
 
-const toneMap = {
-  neutral: 'bg-[rgba(var(--surface-muted),0.8)] text-[rgb(var(--text))]',
-  success: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300',
-  warning: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-  danger: 'bg-rose-500/15 text-rose-700 dark:text-rose-300',
-  info: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
+const tones: Record<BadgeTone, string> = {
+  neutral: 'bg-fg/[0.07] text-soft',
+  accent: 'bg-accent-soft text-accent',
+  marker: 'bg-marker text-[#3A3000]',
+  ink: 'bg-ink text-white dark:bg-fg/90 dark:text-[#0F1211]',
+  high: 'bg-risk-high-bg text-risk-high',
+  mid: 'bg-risk-mid-bg text-risk-mid',
+  low: 'bg-risk-low-bg text-risk-low',
 };
 
-export function Badge({ children, tone = 'neutral' }: BadgeProps) {
+export function Badge({ children, tone = 'neutral', className }: { children: ReactNode; tone?: BadgeTone; className?: string }) {
   return (
-    <span className={cn('inline-flex rounded-full px-3 py-1 text-xs font-semibold', toneMap[tone])}>
+    <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-0.5 text-xs font-semibold leading-5', tones[tone], className)}>
       {children}
     </span>
   );

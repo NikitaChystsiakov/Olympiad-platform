@@ -7,7 +7,7 @@ export async function getUsers(params: {
   search?: string;
   role?: UserRole | '';
 }) {
-  const { data } = await http.get<PageResponse<User>>('/admin/users', { params });
+  const { data } = await http.get<PageResponse<User>>('/admin/users', { params: { ...params, role: params.role || undefined } });
   return data;
 }
 

@@ -1,6 +1,17 @@
 export type UserRole = 'STUDENT' | 'ORGANIZER' | 'ADMIN';
-export type OlympiadStatus = 'DRAFT' | 'PUBLISHED' | 'ACTIVE' | 'FINISHED';
+export type OlympiadStatus = 'DRAFT' | 'PUBLISHED' | 'ACTIVE' | 'FINISHED' | 'CANCELLED';
 export type QuestionType = 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'TEXT' | 'CODE' | 'MANUAL_REVIEW';
+export type AttemptStatus = 'ACTIVE' | 'PAUSED' | 'PENDING_REVIEW' | 'FINISHED' | 'DISQUALIFIED';
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+export type ProctoringEventType =
+  | 'TAB_SWITCH'
+  | 'FULLSCREEN_EXIT'
+  | 'FACE_MISSING'
+  | 'MULTIPLE_FACES'
+  | 'COPY_PASTE'
+  | 'CAMERA_UNAVAILABLE'
+  | 'SUSPICIOUS_SOUND'
+  | 'SCREEN_RECORDING';
 
 export interface User {
   id: string;
@@ -23,7 +34,6 @@ export interface AdminUserPayload {
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
-  tokenType: string;
   userId: string;
   email: string;
   fullName: string;
@@ -39,6 +49,8 @@ export interface Olympiad {
   durationMinutes: number;
   status: OlympiadStatus;
   createdBy: string;
+  questionCount: number;
+  totalPoints: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -48,6 +60,7 @@ export interface Question {
   text: string;
   type: QuestionType;
   options?: string[];
+  correctAnswer?: string;
   points: number;
 }
 
@@ -59,15 +72,21 @@ export interface QuestionPayload {
   points: number;
 }
 
-export interface Participation {
+export interface Attempt {
   id: string;
   olympiadId: string;
   olympiadTitle: string;
-  userEmail?: string;
   startedAt: string;
-  finishedAt?: string;
-  score?: number;
-  status: string;
+  deadline: string;
+  finishedAt?: string | null;
+  score: number | null;
+  maxPossibleScore: number;
+  status: AttemptStatus;
+}
+
+export interface SavedAnswer {
+  questionId: string;
+  answer: string;
 }
 
 export interface AnswerDetail {
@@ -79,24 +98,24 @@ export interface AnswerDetail {
   correctAnswer?: string;
   isCorrect: boolean;
   pointsEarned: number;
-  maxPoints?: number;
+  maxPoints: number;
   pendingReview?: boolean;
   reviewComment?: string;
 }
 
 export interface ParticipationResult {
-  id: string;
+  participationId: string;
   olympiadId: string;
   olympiadTitle: string;
-  userEmail?: string;
-  startedAt: string;
-  finishedAt?: string;
-  score?: number;
-  status: string;
-  place?: number;
-  pendingReview?: boolean;
+  userName: string;
+  userEmail: string;
   totalScore: number;
   maxPossibleScore: number;
+  place?: number | null;
+  pendingReview: boolean;
+  startedAt: string;
+  finishedAt?: string | null;
+  status: AttemptStatus;
   answers: AnswerDetail[];
 }
 
@@ -106,11 +125,20 @@ export interface OlympiadParticipant {
   userEmail: string;
   score: number;
   maxPossibleScore: number;
-  place?: number;
+  place?: number | null;
   pendingReview: boolean;
   startedAt: string;
-  finishedAt?: string;
-  status: string;
+  finishedAt?: string | null;
+  status: AttemptStatus;
+}
+
+export interface FileAttachment {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  url: string;
+  createdAt: string;
 }
 
 export interface ManualReviewItem {
@@ -121,10 +149,47 @@ export interface ManualReviewItem {
   userName: string;
   userEmail: string;
   userAnswer: string;
-  pointsEarned?: number;
+  pointsEarned?: number | null;
   maxPoints: number;
-  reviewComment?: string;
+  reviewComment?: string | null;
   files?: FileAttachment[];
+}
+
+export interface ProctoringReportParticipant {
+  email: string;
+  fullName: string;
+  participationId: string;
+  participationStatus: AttemptStatus;
+  totalEvents: number;
+  flaggedEvents: number;
+  countsByType: Partial<Record<ProctoringEventType, number>>;
+  lastEventAt?: string | null;
+  riskLevel: RiskLevel;
+}
+
+export interface ProctoringReportEvent {
+  id: string;
+  userEmail: string;
+  userName: string;
+  eventType: ProctoringEventType;
+  metadata?: string | null;
+  timestamp: string;
+  flagged: boolean;
+}
+
+export interface ProctoringReport {
+  olympiadId: string;
+  olympiadTitle: string;
+  totalEvents: number;
+  flaggedEvents: number;
+  participants: ProctoringReportParticipant[];
+  events: ProctoringReportEvent[];
+}
+
+export interface ProctoringEventPayload {
+  olympiadId: string;
+  eventType: ProctoringEventType;
+  metadata: string;
 }
 
 export interface PageResponse<T> {
@@ -137,33 +202,8 @@ export interface PageResponse<T> {
   last: boolean;
 }
 
-export interface ApiMessage {
-  success: boolean;
+export interface ApiError {
+  success: false;
   message: string;
-}
-
-export interface ProctoringEventPayload {
-  olympiadId: string;
-  eventType: 'TAB_SWITCH' | 'FULLSCREEN_EXIT' | 'FACE_MISSING' | 'SUSPICIOUS_FLAG';
-  metadata: string;
-}
-
-export interface LocalProctoringEntry {
-  id: string;
-  olympiadId: string;
-  userEmail: string;
-  userName: string;
-  eventType: string;
-  metadata: string;
-  createdAt: string;
-  isFlagged: boolean;
-}
-
-export interface FileAttachment {
-  id: string;
-  originalName: string;
-  mimeType: string;
-  size: number;
-  url: string;
-  createdAt: string;
+  data?: Record<string, string> | null;
 }

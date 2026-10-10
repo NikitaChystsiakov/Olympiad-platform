@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
+    "@vladmandic/face-api": "^1.7.15",
     "axios": "^1.7.7",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -19,7 +20,6 @@
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.53.1",
     "react-router-dom": "^6.28.0",
-    "recharts": "^2.15.4",
     "sonner": "^1.7.0",
     "zod": "^3.23.8",
     "zustand": "^5.0.0"
