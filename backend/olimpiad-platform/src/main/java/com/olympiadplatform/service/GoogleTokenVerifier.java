@@ -25,15 +25,15 @@ public class GoogleTokenVerifier {
                     .retrieve()
                     .body(GoogleTokenInfo.class);
         } catch (RestClientException ex) {
-            throw new BusinessException("Google token verification failed", ex);
+            throw new BusinessException("Не удалось проверить Google-токен", ex);
         }
 
         if (tokenInfo == null || tokenInfo.email == null || !"true".equalsIgnoreCase(tokenInfo.emailVerified)) {
-            throw new BusinessException("Google token is invalid");
+            throw new BusinessException("Недействительный Google-токен");
         }
 
         if (!googleClientId.isBlank() && !googleClientId.equals(tokenInfo.aud)) {
-            throw new BusinessException("Google token audience is invalid");
+            throw new BusinessException("Google-токен выдан для другого приложения");
         }
 
         return new GoogleProfile(tokenInfo.sub, tokenInfo.email, tokenInfo.name == null ? tokenInfo.email : tokenInfo.name);

@@ -27,6 +27,7 @@ public class FileAttachmentService {
     private final AnswerRepository answerRepository;
     private final ParticipationRepository participationRepository;
     private final UserRepository userRepository;
+    private final QuestionRepository questionRepository;
 
     @Value("${app.upload.dir:./uploads}")
     private String uploadDir;
@@ -43,10 +44,10 @@ public class FileAttachmentService {
                                                        @NonNull String questionId,
                                                        @NonNull String userEmail) {
         Participation participation = participationRepository.findById(participationId)
-                .orElseThrow(() -> new BusinessException("Участие не найдено"));
+                .orElseThrow(() -> BusinessException.notFound("Участие не найдено"));
 
         if (!participation.getUser().getEmail().equals(userEmail)) {
-            throw new BusinessException("Доступ запрещён");
+            throw BusinessException.forbidden("Доступ запрещён");
         }
 
         var answer = answerRepository.findByParticipationIdAndQuestionId(participationId, questionId);
@@ -63,14 +64,23 @@ public class FileAttachmentService {
                                              @NonNull String userEmail,
                                              @NonNull MultipartFile file) throws IOException {
         Participation participation = participationRepository.findById(participationId)
-                .orElseThrow(() -> new BusinessException("Участие не найдено"));
+                .orElseThrow(() -> BusinessException.notFound("Участие не найдено"));
+
+        if (!participation.getUser().getEmail().equals(userEmail)) {
+            throw BusinessException.forbidden("Доступ запрещён");
+        }
 
         if (participation.getStatus() != Participation.ParticipationStatus.ACTIVE) {
             throw new BusinessException("Участие неактивно");
         }
 
-        if (!participation.getUser().getEmail().equals(userEmail)) {
-            throw new BusinessException("Доступ запрещён");
+        var question = questionRepository.findById(questionId)
+                .orElseThrow(() -> BusinessException.notFound("Вопрос не найден"));
+        if (!question.getOlympiad().getId().equals(participation.getOlympiad().getId())) {
+            throw new BusinessException("Вопрос не относится к этой олимпиаде");
+        }
+        if (question.getType() != com.olympiadplatform.entity.Question.QuestionType.MANUAL_REVIEW) {
+            throw new BusinessException("К этому вопросу нельзя прикрепить файл");
         }
 
         validateFile(file);
@@ -86,10 +96,11 @@ public class FileAttachmentService {
             return answerRepository.save(newAnswer);
         });
 
-        String originalName = file.getOriginalFilename();
+        String originalName = sanitizeFileName(file.getOriginalFilename());
         String extension = "";
-        if (originalName != null && originalName.contains(".")) {
-            extension = originalName.substring(originalName.lastIndexOf("."));
+        int dot = originalName.lastIndexOf('.');
+        if (dot >= 0 && originalName.length() - dot <= 10) {
+            extension = originalName.substring(dot).toLowerCase();
         }
         String storedName = UUID.randomUUID() + extension;
         Path uploadPath = Paths.get(uploadDir).toAbsolutePath();
@@ -103,7 +114,7 @@ public class FileAttachmentService {
         FileAttachment attachment = FileAttachment.builder()
                 .answer(answer)
                 .fileName(storedName)
-                .originalName(originalName != null ? originalName : "file")
+                .originalName(originalName)
                 .mimeType(file.getContentType() != null ? file.getContentType() : "application/octet-stream")
                 .size(file.getSize())
                 .url("/api/files/" + storedName)
@@ -116,21 +127,22 @@ public class FileAttachmentService {
     @Transactional
     public void deleteAttachment(@NonNull String attachmentId, @NonNull String userEmail) {
         FileAttachment attachment = fileAttachmentRepository.findById(attachmentId)
-                .orElseThrow(() -> new BusinessException("Файл не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Файл не найден"));
 
         Answer answer = attachment.getAnswer();
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new BusinessException("Пользователь не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
 
-        boolean isOwner = answer.getParticipation().getUser().getId().equals(user.getId());
-        boolean isPrivileged = user.getRole() == User.Role.ORGANIZER || user.getRole() == User.Role.ADMIN;
+        Participation participation = answer.getParticipation();
+        boolean isOwner = participation.getUser().getId().equals(user.getId())
+                && participation.getStatus() == Participation.ParticipationStatus.ACTIVE;
 
-        if (!isOwner && !isPrivileged) {
-            throw new BusinessException("Нет прав на удаление файла");
+        if (!isOwner && !canManageOlympiad(participation, user)) {
+            throw BusinessException.forbidden("Нет прав на удаление файла");
         }
 
         try {
-            Path filePath = Paths.get(uploadDir).resolve(attachment.getFileName());
+            Path filePath = resolveStoredFile(attachment.getFileName());
             Files.deleteIfExists(filePath);
         } catch (IOException e) {
             log.error("Ошибка при удалении файла с диска: {}", attachment.getFileName(), e);
@@ -139,10 +151,52 @@ public class FileAttachmentService {
         fileAttachmentRepository.delete(attachment);
     }
 
-    public String getOriginalFileName(@NonNull String storedFileName) {
-        return fileAttachmentRepository.findByFileName(storedFileName)
-                .map(FileAttachment::getOriginalName)
-                .orElse(storedFileName);
+    /** Returns the stored file if the user is its author, the olympiad's organizer or an admin. */
+    @NonNull
+    @Transactional(readOnly = true)
+    public StoredFile loadForDownload(@NonNull String storedFileName, @NonNull String userEmail) {
+        FileAttachment attachment = fileAttachmentRepository.findByFileName(storedFileName)
+                .orElseThrow(() -> BusinessException.notFound("Файл не найден"));
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
+        Participation participation = attachment.getAnswer().getParticipation();
+
+        boolean isOwner = participation.getUser().getId().equals(user.getId());
+        if (!isOwner && !canManageOlympiad(participation, user)) {
+            throw BusinessException.forbidden("Доступ запрещён");
+        }
+
+        Path path = resolveStoredFile(storedFileName);
+        if (!Files.isRegularFile(path)) {
+            throw BusinessException.notFound("Файл не найден");
+        }
+        return new StoredFile(path, attachment.getOriginalName(), attachment.getMimeType());
+    }
+
+    public record StoredFile(Path path, String originalName, String mimeType) {}
+
+    private boolean canManageOlympiad(Participation participation, User user) {
+        return user.getRole() == User.Role.ADMIN
+                || (user.getRole() == User.Role.ORGANIZER
+                    && participation.getOlympiad().getCreatedBy().equals(user.getEmail()));
+    }
+
+    private Path resolveStoredFile(String storedFileName) {
+        Path root = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path path = root.resolve(storedFileName).normalize();
+        if (!path.startsWith(root)) {
+            throw BusinessException.notFound("Файл не найден");
+        }
+        return path;
+    }
+
+    private String sanitizeFileName(String name) {
+        if (name == null || name.isBlank()) {
+            return "file";
+        }
+        String base = name.substring(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1);
+        String cleaned = base.replaceAll("[\\r\\n\"\\\\/]", "_");
+        return cleaned.length() > 200 ? cleaned.substring(cleaned.length() - 200) : cleaned;
     }
 
     private FileAttachmentResponse toResponse(FileAttachment a) {

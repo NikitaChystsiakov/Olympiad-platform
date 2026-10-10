@@ -77,7 +77,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(userRepository.save(user)).thenReturn(user);
 
-        UserResponse result = service.update(user.getId(), request);
+        UserResponse result = service.update(user.getId(), request, "admin@test.com");
 
         assertThat(result.getFullName()).isEqualTo("Updated Name");
         assertThat(result.getRole()).isEqualTo(User.Role.ADMIN);

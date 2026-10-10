@@ -13,11 +13,10 @@ import java.util.Optional;
 @Repository
 public interface ParticipationRepository extends JpaRepository<Participation, String> {
     
-    // Используем @Query вместо автоматического построения
     @Query("SELECT p FROM Participation p WHERE p.user.id = :userId AND p.olympiad.id = :olympiadId")
     Optional<Participation> findByUserIdAndOlympiadId(@Param("userId") String userId, @Param("olympiadId") java.util.UUID olympiadId);
 
-    @Query("SELECT p FROM Participation p WHERE p.user.id = :userId AND p.olympiad.id = :olympiadId AND p.status = :status ORDER BY p.startedAt DESC")
+    @Query("SELECT p FROM Participation p WHERE p.user.id = :userId AND p.olympiad.id = :olympiadId AND p.status = :status ORDER BY p.startedAt DESC LIMIT 1")
     Optional<Participation> findActiveByUserIdAndOlympiadId(
             @Param("userId") String userId,
             @Param("olympiadId") java.util.UUID olympiadId,
@@ -25,6 +24,19 @@ public interface ParticipationRepository extends JpaRepository<Participation, St
     );
     
     List<Participation> findByUserId(String userId);
+
+    @Query("SELECT p FROM Participation p JOIN FETCH p.olympiad WHERE p.user.email = :email ORDER BY p.startedAt DESC")
+    List<Participation> findWithOlympiadByUserEmail(@Param("email") String email);
+
+    @Query("SELECT p FROM Participation p JOIN FETCH p.olympiad WHERE p.status = :status")
+    List<Participation> findWithOlympiadByStatus(@Param("status") Participation.ParticipationStatus status);
+
+    @Query("SELECT COUNT(p) > 0 FROM Participation p WHERE p.user.email = :email AND p.olympiad.id = :olympiadId AND p.status = :status")
+    boolean existsByUserEmailAndOlympiadIdAndStatus(
+            @Param("email") String email,
+            @Param("olympiadId") java.util.UUID olympiadId,
+            @Param("status") Participation.ParticipationStatus status
+    );
     
     List<Participation> findByOlympiadId(java.util.UUID olympiadId);
 

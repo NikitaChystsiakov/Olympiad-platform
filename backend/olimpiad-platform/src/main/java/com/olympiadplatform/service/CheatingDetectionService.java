@@ -3,55 +3,45 @@ package com.olympiadplatform.service;
 import com.olympiadplatform.entity.ProctoringEvent;
 import com.olympiadplatform.repository.ProctoringEventRepository;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import java.time.LocalDateTime;
-import java.util.List;
 
+import java.time.Duration;
+import java.util.Map;
+
+/**
+ * Decides whether a proctoring signal is suspicious. Each event type has a tolerance: how many
+ * events of that type within the window are acceptable before new ones get flagged.
+ */
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class CheatingDetectionService {
-    
+
+    static final Duration WINDOW = Duration.ofMinutes(5);
+
+    /** Number of earlier events of the same type in {@link #WINDOW} that are still tolerated. */
+    private static final Map<ProctoringEvent.EventType, Integer> TOLERANCE = Map.of(
+            ProctoringEvent.EventType.TAB_SWITCH, 3,
+            ProctoringEvent.EventType.FULLSCREEN_EXIT, 2,
+            ProctoringEvent.EventType.FACE_MISSING, 1,
+            ProctoringEvent.EventType.COPY_PASTE, 2
+    );
+
     private final ProctoringEventRepository proctoringEventRepository;
-    
+
     public boolean analyzeEvent(ProctoringEvent event) {
-        int recentEvents = countRecentEvents(event.getUserId(), event.getOlympiadId(), event.getTimestamp().minusMinutes(5));
-        
-        // Strategy pattern in action
-        switch (event.getEventType()) {
-            case TAB_SWITCH:
-                // Flag if more than 3 tab switches in 5 minutes
-                return countEventsByType(event.getUserId(), event.getOlympiadId(), 
-                        ProctoringEvent.EventType.TAB_SWITCH, event.getTimestamp().minusMinutes(5)) > 3;
-                
-            case FULLSCREEN_EXIT:
-                // Flag if more than 2 fullscreen exits
-                return countEventsByType(event.getUserId(), event.getOlympiadId(),
-                        ProctoringEvent.EventType.FULLSCREEN_EXIT, event.getTimestamp().minusMinutes(5)) > 2;
-                
-            case FACE_MISSING:
-                // Flag if face missing for more than 10 seconds (approx 2 events)
-                return recentEvents > 2;
-                
-            case MULTIPLE_FACES:
-                // Always flag multiple faces detected
-                return true;
-                
-            default:
-                return false;
-        }
+        return switch (event.getEventType()) {
+            case MULTIPLE_FACES, CAMERA_UNAVAILABLE, SCREEN_RECORDING -> true;
+            case SUSPICIOUS_SOUND -> false;
+            default -> countRecent(event) > TOLERANCE.getOrDefault(event.getEventType(), Integer.MAX_VALUE);
+        };
     }
-    
-    private int countRecentEvents(String userId, String olympiadId, LocalDateTime since) {
-        List<ProctoringEvent> events = proctoringEventRepository
-                .findByUserIdAndOlympiadIdAndTimestampAfter(userId, olympiadId, since);
-        return events.size();
-    }
-    
-    private int countEventsByType(String userId, String olympiadId, ProctoringEvent.EventType type, LocalDateTime since) {
-        List<ProctoringEvent> events = proctoringEventRepository
-                .findByUserIdAndOlympiadIdAndEventTypeAndTimestampAfter(userId, olympiadId, type, since);
-        return events.size();
+
+    private int countRecent(ProctoringEvent event) {
+        return proctoringEventRepository.findByUserIdAndOlympiadIdAndEventTypeAndTimestampAfter(
+                event.getUserId(),
+                event.getOlympiadId(),
+                event.getEventType(),
+                event.getTimestamp().minus(WINDOW)
+        ).size();
     }
 }

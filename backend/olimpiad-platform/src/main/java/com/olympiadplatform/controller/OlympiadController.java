@@ -11,10 +11,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.bind.annotation.*;
 import org.springframework.security.core.Authentication;
-import java.util.Map;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
 
@@ -26,63 +24,41 @@ public class OlympiadController {
     private final OlympiadService olympiadService;
 
     @GetMapping
-    public ResponseEntity<Page<OlympiadResponse>> getAllOlympiads(
+    public Page<OlympiadResponse> getAllOlympiads(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String search,
-            Pageable pageable) {
+            Pageable pageable,
+            Authentication auth) {
         Olympiad.OlympiadStatus olympiadStatus = null;
-        if (status != null && !status.isEmpty()) {
+        if (status != null && !status.isBlank()) {
             try {
                 olympiadStatus = Olympiad.OlympiadStatus.valueOf(status.toUpperCase());
-            } catch (IllegalArgumentException e) {
-                // Если статус не распознан, возвращаем все
+            } catch (IllegalArgumentException ignored) {
+                // Unknown status filter: show everything.
             }
         }
-        return ResponseEntity.ok(olympiadService.getAllOlympiads(olympiadStatus, search, pageable)
-                .map(this::toResponse));
+        return olympiadService.getAllOlympiads(olympiadStatus, search, auth.getName(), pageable)
+                .map(this::toResponse);
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<OlympiadResponse> getOlympiad(@PathVariable UUID id) {
-        return ResponseEntity.ok(toResponse(olympiadService.getOlympiadById(id)));
+    public OlympiadResponse getOlympiad(@PathVariable UUID id, Authentication auth) {
+        return toResponse(olympiadService.getOlympiadById(id, auth.getName()));
     }
 
     @PostMapping
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
-    public ResponseEntity<?> createOlympiad(@RequestBody OlympiadCreateRequest request) {
-        
-        // Получаем email из SecurityContext
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(401).body(Map.of("error", "Не авторизован"));
-        }
-        
-        String email = authentication.getName();
-        
-        System.out.println("📥 === CREATE OLYMPIAD ===");
-        System.out.println("📥 Auth: " + (authentication != null));
-        System.out.println("📥 Principal: " + authentication.getPrincipal());
-        System.out.println("📥 Email: " + email);
-        System.out.println("📥 Title: " + request.getTitle());
-        System.out.println("📥 Start: " + request.getStartTime());
-        System.out.println("📥 End: " + request.getEndTime());
-        
-        if (email == null || email.equals("anonymousUser")) {
-            return ResponseEntity.status(401).body(Map.of("error", "Пользователь не найден в токене"));
-        }
-        
-        return ResponseEntity.ok(toResponse(olympiadService.createOlympiad(request, email)));
+    public OlympiadResponse createOlympiad(@Valid @RequestBody OlympiadCreateRequest request, Authentication auth) {
+        return toResponse(olympiadService.createOlympiad(request, auth.getName()));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
-    public ResponseEntity<?> updateOlympiad(
+    public OlympiadResponse updateOlympiad(
             @PathVariable UUID id,
-            @Valid @RequestBody OlympiadUpdateRequest request) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        return ResponseEntity.ok(toResponse(olympiadService.updateOlympiad(id, request, email)));
+            @Valid @RequestBody OlympiadUpdateRequest request,
+            Authentication auth) {
+        return toResponse(olympiadService.updateOlympiad(id, request, auth.getName()));
     }
 
     @DeleteMapping("/{id}")
@@ -94,13 +70,8 @@ public class OlympiadController {
 
     @PostMapping("/{id}/publish")
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
-    public ResponseEntity<?> publishOlympiad(@PathVariable UUID id) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        
-        System.out.println("📥 PUBLISH - ID: " + id + ", User: " + email);
-        
-        return ResponseEntity.ok(toResponse(olympiadService.publishOlympiad(id, email)));
+    public OlympiadResponse publishOlympiad(@PathVariable UUID id, Authentication auth) {
+        return toResponse(olympiadService.publishOlympiad(id, auth.getName()));
     }
 
     private OlympiadResponse toResponse(Olympiad olympiad) {
@@ -113,6 +84,8 @@ public class OlympiadController {
                 .durationMinutes(olympiad.getDurationMinutes())
                 .status(olympiad.getStatus().name())
                 .createdBy(olympiad.getCreatedBy())
+                .questionCount(olympiad.getQuestions().size())
+                .totalPoints(olympiad.getQuestions().stream().mapToInt(q -> q.getPoints() == null ? 0 : q.getPoints()).sum())
                 .createdAt(olympiad.getCreatedAt())
                 .updatedAt(olympiad.getUpdatedAt())
                 .build();

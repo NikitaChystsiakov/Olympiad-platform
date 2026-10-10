@@ -33,7 +33,7 @@ public class AuthService {
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new BusinessException("Email already registered");
+            throw new BusinessException("Пользователь с таким email уже существует");
         }
         
         User user = User.builder()
@@ -61,7 +61,7 @@ public class AuthService {
         SecurityContextHolder.getContext().setAuthentication(authentication);
         
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new BusinessException("User not found"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
         
         String accessToken = tokenProvider.generateAccessToken(authentication);
         String refreshToken = createRefreshToken(user);
@@ -72,13 +72,16 @@ public class AuthService {
     @Transactional
     public AuthResponse refreshToken(String refreshToken) {
         RefreshToken token = refreshTokenRepository.findByToken(refreshToken)
-                .orElseThrow(() -> new BusinessException("Invalid refresh token"));
+                .orElseThrow(() -> new BusinessException("Недействительный refresh-токен", org.springframework.http.HttpStatus.UNAUTHORIZED));
         
         if (token.isRevoked() || token.getExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new BusinessException("Refresh token expired or revoked");
+            throw new BusinessException("Сессия истекла, войдите заново", org.springframework.http.HttpStatus.UNAUTHORIZED);
         }
         
         User user = token.getUser();
+        if (!user.isActive()) {
+            throw BusinessException.forbidden("Аккаунт заблокирован");
+        }
         String newAccessToken = tokenProvider.generateAccessToken(createAuthentication(user));
         String newRefreshToken = createRefreshToken(user);
         
@@ -104,7 +107,7 @@ public class AuthService {
 
         user = userRepository.save(user);
         if (!user.isActive()) {
-            throw new BusinessException("User is disabled");
+            throw BusinessException.forbidden("Аккаунт заблокирован");
         }
 
         Authentication authentication = createAuthentication(user);

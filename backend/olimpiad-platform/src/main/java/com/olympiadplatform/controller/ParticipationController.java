@@ -3,15 +3,20 @@ package com.olympiadplatform.controller;
 import com.olympiadplatform.dto.request.ReviewAnswerRequest;
 import com.olympiadplatform.dto.request.SubmitAnswerRequest;
 import com.olympiadplatform.dto.response.ApiResponse;
-import jakarta.validation.Valid;
+import com.olympiadplatform.dto.response.ManualReviewResponse;
+import com.olympiadplatform.dto.response.OlympiadParticipantResponse;
+import com.olympiadplatform.dto.response.ParticipationResponse;
+import com.olympiadplatform.dto.response.ParticipationSummaryResponse;
+import com.olympiadplatform.dto.response.SavedAnswerResponse;
 import com.olympiadplatform.service.ParticipationService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -22,66 +27,63 @@ public class ParticipationController {
     private final ParticipationService participationService;
 
     @PostMapping("/start/{olympiadId}")
-    public ResponseEntity<?> startOlympiad(@PathVariable UUID olympiadId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        
-        System.out.println("📥 START PARTICIPATION - Olympiad: " + olympiadId + ", User: " + email);
-        
-        return ResponseEntity.ok(participationService.startParticipation(olympiadId, email));
+    @PreAuthorize("hasRole('STUDENT')")
+    public ParticipationSummaryResponse startOlympiad(@PathVariable UUID olympiadId, Authentication auth) {
+        return ParticipationSummaryResponse.from(participationService.startParticipation(olympiadId, auth.getName()));
     }
 
     @PostMapping("/submit")
-    public ResponseEntity<?> submitAnswer(@RequestBody SubmitAnswerRequest request) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        
+    @PreAuthorize("hasRole('STUDENT')")
+    public ApiResponse submitAnswer(@Valid @RequestBody SubmitAnswerRequest request, Authentication auth) {
         participationService.submitAnswer(
                 request.getParticipationId(),
                 request.getQuestionId(),
                 request.getAnswer(),
-                email
+                auth.getName()
         );
-
-        return ResponseEntity.ok(new ApiResponse(true, "Answer submitted"));
+        return new ApiResponse(true, "Ответ сохранён");
     }
 
     @PostMapping("/finish/{participationId}")
-    public ResponseEntity<?> finishOlympiad(@PathVariable String participationId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        
-        return ResponseEntity.ok(participationService.finishParticipation(participationId, email));
+    @PreAuthorize("hasRole('STUDENT')")
+    public ParticipationSummaryResponse finishOlympiad(@PathVariable String participationId, Authentication auth) {
+        return ParticipationSummaryResponse.from(participationService.finishParticipation(participationId, auth.getName()));
+    }
+
+    @GetMapping("/my")
+    public List<ParticipationSummaryResponse> getMyParticipations(Authentication auth) {
+        return participationService.getMyParticipations(auth.getName());
+    }
+
+    @GetMapping("/{participationId}/answers")
+    public List<SavedAnswerResponse> getSavedAnswers(@PathVariable String participationId, Authentication auth) {
+        return participationService.getSavedAnswers(participationId, auth.getName());
     }
 
     @GetMapping("/{participationId}/results")
-    public ResponseEntity<?> getResults(@PathVariable String participationId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        
-        return ResponseEntity.ok(participationService.getResults(participationId, email));
+    public ParticipationResponse getResults(@PathVariable String participationId, Authentication auth) {
+        return participationService.getResults(participationId, auth.getName());
     }
 
     @GetMapping("/olympiads/{olympiadId}/participants")
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
-    public ResponseEntity<?> getOlympiadParticipants(@PathVariable UUID olympiadId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return ResponseEntity.ok(participationService.getOlympiadParticipants(olympiadId, auth.getName()));
+    public List<OlympiadParticipantResponse> getOlympiadParticipants(@PathVariable UUID olympiadId, Authentication auth) {
+        return participationService.getOlympiadParticipants(olympiadId, auth.getName());
     }
 
     @GetMapping("/olympiads/{olympiadId}/manual-review")
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
-    public ResponseEntity<?> getManualReviewQueue(@PathVariable UUID olympiadId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return ResponseEntity.ok(participationService.getManualReviewQueue(olympiadId, auth.getName()));
+    public List<ManualReviewResponse> getManualReviewQueue(@PathVariable UUID olympiadId, Authentication auth) {
+        return participationService.getManualReviewQueue(olympiadId, auth.getName());
     }
 
     @PostMapping("/answers/{answerId}/review")
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
-    public ResponseEntity<?> reviewAnswer(
+    public ResponseEntity<ApiResponse> reviewAnswer(
             @PathVariable String answerId,
-            @Valid @RequestBody ReviewAnswerRequest request) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return ResponseEntity.ok(participationService.reviewAnswer(answerId, request, auth.getName()));
+            @Valid @RequestBody ReviewAnswerRequest request,
+            Authentication auth) {
+        participationService.reviewAnswer(answerId, request, auth.getName());
+        return ResponseEntity.ok(new ApiResponse(true, "Оценка сохранена"));
     }
 }

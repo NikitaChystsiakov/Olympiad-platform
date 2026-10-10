@@ -34,11 +34,11 @@ public class Judge0Service {
                     .retrieve()
                     .body(Judge0Result.class);
         } catch (RestClientException ex) {
-            throw new BusinessException("Judge0 API is unavailable", ex);
+            throw new BusinessException("Сервис выполнения кода недоступен", ex);
         }
 
         if (result == null) {
-            throw new BusinessException("Judge0 did not return a result");
+            throw new BusinessException("Сервис выполнения кода не вернул результат");
         }
 
         return RunCodeResponse.builder()

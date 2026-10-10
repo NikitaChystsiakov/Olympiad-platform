@@ -65,16 +65,17 @@ public class JwtTokenProvider {
             Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token);
             return true;
         } catch (JwtException | IllegalArgumentException e) {
-            log.error("Invalid JWT token: {}", e.getMessage());
+            log.debug("Invalid JWT token: {}", e.getMessage());
             return false;
         }
     }
+
     public String getEmailFromToken(String token) {
-    return Jwts.parser()
-            .verifyWith(getSigningKey())  // ← замените key на getSigningKey()
-            .build()
-            .parseSignedClaims(token)
-            .getPayload()
-            .get("email", String.class);
-}
+        return Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .get("email", String.class);
+    }
 }

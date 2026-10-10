@@ -6,12 +6,15 @@ import com.olympiadplatform.dto.response.FileAttachmentResponse;
 import com.olympiadplatform.dto.response.ManualReviewResponse;
 import com.olympiadplatform.dto.response.OlympiadParticipantResponse;
 import com.olympiadplatform.dto.response.ParticipationResponse;
+import com.olympiadplatform.dto.response.ParticipationSummaryResponse;
+import com.olympiadplatform.dto.response.SavedAnswerResponse;
 import com.olympiadplatform.entity.*;
 import com.olympiadplatform.exception.BusinessException;
 import com.olympiadplatform.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.NonNull;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +33,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ParticipationService {
 
+    /** Answers that arrive slightly after the deadline (debounced input, network) are still accepted. */
+    private static final long SUBMIT_GRACE_SECONDS = 15;
+
     private final ParticipationRepository participationRepository;
     private final OlympiadRepository olympiadRepository;
     private final QuestionRepository questionRepository;
@@ -41,7 +47,7 @@ public class ParticipationService {
     @Transactional
     public Participation startParticipation(@NonNull UUID olympiadId, @NonNull String userEmail) {
         Olympiad olympiad = olympiadRepository.findById(olympiadId)
-                .orElseThrow(() -> new BusinessException("Олимпиада не найдена"));
+                .orElseThrow(() -> BusinessException.notFound("Олимпиада не найдена"));
 
         if (olympiad.getStatus() != Olympiad.OlympiadStatus.PUBLISHED &&
             olympiad.getStatus() != Olympiad.OlympiadStatus.ACTIVE) {
@@ -49,7 +55,7 @@ public class ParticipationService {
         }
 
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new BusinessException("Пользователь не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -65,9 +71,7 @@ public class ParticipationService {
                 return existing;
             }
 
-            existing.setStatus(Participation.ParticipationStatus.FINISHED);
-            existing.setFinishedAt(deadline);
-            participationRepository.save(existing);
+            completeAttempt(existing, deadline);
         }
 
         if (now.plusSeconds(30).isBefore(olympiad.getStartTime())) {
@@ -91,34 +95,32 @@ public class ParticipationService {
     }
 
     @NonNull
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public Answer submitAnswer(@NonNull String participationId, @NonNull String questionId,
                                String answer, @NonNull String userEmail) {
         Participation participation = participationRepository.findById(participationId)
-                .orElseThrow(() -> new BusinessException("Участие не найдено"));
+                .orElseThrow(() -> BusinessException.notFound("Участие не найдено"));
+
+        if (!participation.getUser().getEmail().equals(userEmail)) {
+            throw BusinessException.forbidden("Доступ запрещён");
+        }
 
         if (participation.getStatus() != Participation.ParticipationStatus.ACTIVE) {
             throw new BusinessException("Участие неактивно");
         }
 
-        if (!participation.getUser().getEmail().equals(userEmail)) {
-            throw new BusinessException("Доступ запрещён");
-        }
-
         LocalDateTime now = LocalDateTime.now();
 
         Olympiad olympiad = participation.getOlympiad();
-        LocalDateTime deadline = participation.getStartedAt().plusMinutes(olympiad.getDurationMinutes());
+        LocalDateTime deadline = deadlineOf(participation);
 
-        if (now.isAfter(deadline)) {
-            participation.setStatus(Participation.ParticipationStatus.FINISHED);
-            participation.setFinishedAt(now);
-            participationRepository.save(participation);
+        if (now.isAfter(deadline.plusSeconds(SUBMIT_GRACE_SECONDS))) {
+            completeAttempt(participation, deadline);
             throw new BusinessException("Время олимпиады истекло");
         }
 
         Question question = questionRepository.findById(questionId)
-                .orElseThrow(() -> new BusinessException("Вопрос не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Вопрос не найден"));
 
         if (!question.getOlympiad().getId().equals(olympiad.getId())) {
             throw new BusinessException("Вопрос не относится к этой олимпиаде");
@@ -159,45 +161,70 @@ public class ParticipationService {
     @Transactional
     public Participation finishParticipation(@NonNull String participationId, @NonNull String userEmail) {
         Participation participation = participationRepository.findById(participationId)
-                .orElseThrow(() -> new BusinessException("Участие не найдено"));
+                .orElseThrow(() -> BusinessException.notFound("Участие не найдено"));
 
         if (!participation.getUser().getEmail().equals(userEmail)) {
-            throw new BusinessException("Доступ запрещён");
+            throw BusinessException.forbidden("Доступ запрещён");
         }
 
         if (participation.getStatus() != Participation.ParticipationStatus.ACTIVE) {
             throw new BusinessException("Участие уже завершено");
         }
 
-        participation.setFinishedAt(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime deadline = deadlineOf(participation);
+        return completeAttempt(participation, now.isAfter(deadline) ? deadline : now);
+    }
 
-        List<Answer> answers = answerRepository.findByParticipationId(participationId);
-        boolean pendingReview = hasPendingManualReview(participation, answers);
-        int totalScore = answers.stream()
-                .mapToInt(answer -> answer.getPointsEarned() == null ? 0 : answer.getPointsEarned())
-                .sum();
-        participation.setScore(totalScore);
-        participation.setStatus(pendingReview
-                ? Participation.ParticipationStatus.PENDING_REVIEW
-                : Participation.ParticipationStatus.FINISHED);
+    /** Closes attempts whose timer ran out while the student was offline. */
+    @Scheduled(fixedDelayString = "${app.participation.expire-check-ms:60000}")
+    @Transactional
+    public void finishExpiredAttempts() {
+        LocalDateTime now = LocalDateTime.now();
+        participationRepository.findWithOlympiadByStatus(Participation.ParticipationStatus.ACTIVE).stream()
+                .filter(participation -> now.isAfter(deadlineOf(participation).plusSeconds(SUBMIT_GRACE_SECONDS)))
+                .forEach(participation -> {
+                    completeAttempt(participation, deadlineOf(participation));
+                    log.info("Attempt {} finished automatically after deadline", participation.getId());
+                });
+    }
 
-        return participationRepository.save(participation);
+    @NonNull
+    @Transactional(readOnly = true)
+    public List<ParticipationSummaryResponse> getMyParticipations(@NonNull String userEmail) {
+        return participationRepository.findWithOlympiadByUserEmail(userEmail).stream()
+                .map(ParticipationSummaryResponse::from)
+                .toList();
+    }
+
+    @NonNull
+    @Transactional(readOnly = true)
+    public List<SavedAnswerResponse> getSavedAnswers(@NonNull String participationId, @NonNull String userEmail) {
+        Participation participation = participationRepository.findById(participationId)
+                .orElseThrow(() -> BusinessException.notFound("Участие не найдено"));
+        if (!participation.getUser().getEmail().equals(userEmail)) {
+            throw BusinessException.forbidden("Доступ запрещён");
+        }
+        return answerRepository.findByParticipationId(participationId).stream()
+                .map(answer -> new SavedAnswerResponse(answer.getQuestionId(), answer.getAnswer()))
+                .toList();
     }
 
     @NonNull
     @Transactional(readOnly = true)
     public ParticipationResponse getResults(@NonNull String participationId, @NonNull String userEmail) {
         Participation participation = participationRepository.findById(participationId)
-                .orElseThrow(() -> new BusinessException("Участие не найдено"));
+                .orElseThrow(() -> BusinessException.notFound("Участие не найдено"));
 
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new BusinessException("Пользователь не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
 
         boolean isOwner = participation.getUser().getEmail().equals(userEmail);
-        boolean isOrganizer = user.getRole() == User.Role.ORGANIZER || user.getRole() == User.Role.ADMIN;
-
-        if (!isOwner && !isOrganizer) {
-            throw new BusinessException("Доступ запрещён");
+        if (!isOwner) {
+            ensureCanViewOlympiadResults(participation.getOlympiad(), user);
+        } else if (participation.getStatus() == Participation.ParticipationStatus.ACTIVE) {
+            // Results contain correct answers, so they are hidden until the attempt is over.
+            throw BusinessException.forbidden("Результаты будут доступны после завершения попытки");
         }
 
         List<Answer> answers = answerRepository.findByParticipationId(participationId);
@@ -231,9 +258,9 @@ public class ParticipationService {
     @Transactional(readOnly = true)
     public List<OlympiadParticipantResponse> getOlympiadParticipants(@NonNull UUID olympiadId, @NonNull String userEmail) {
         Olympiad olympiad = olympiadRepository.findById(olympiadId)
-                .orElseThrow(() -> new BusinessException("Олимпиада не найдена"));
+                .orElseThrow(() -> BusinessException.notFound("Олимпиада не найдена"));
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new BusinessException("Пользователь не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
         ensureCanViewOlympiadResults(olympiad, user);
 
         int maxPossibleScore = olympiad.getQuestions().stream().mapToInt(Question::getPoints).sum();
@@ -259,9 +286,9 @@ public class ParticipationService {
     @Transactional(readOnly = true)
     public List<ManualReviewResponse> getManualReviewQueue(@NonNull UUID olympiadId, @NonNull String userEmail) {
         Olympiad olympiad = olympiadRepository.findById(olympiadId)
-                .orElseThrow(() -> new BusinessException("Олимпиада не найдена"));
+                .orElseThrow(() -> BusinessException.notFound("Олимпиада не найдена"));
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new BusinessException("Пользователь не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
         ensureCanViewOlympiadResults(olympiad, user);
 
         Map<String, Question> questionsById = questionRepository.findByOlympiadId(olympiadId).stream()
@@ -307,20 +334,23 @@ public class ParticipationService {
     @Transactional
     public Answer reviewAnswer(@NonNull String answerId, @NonNull ReviewAnswerRequest request, @NonNull String userEmail) {
         Answer answer = answerRepository.findById(answerId)
-                .orElseThrow(() -> new BusinessException("Ответ не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Ответ не найден"));
         Participation participation = answer.getParticipation();
         Olympiad olympiad = participation.getOlympiad();
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new BusinessException("Пользователь не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
         ensureCanViewOlympiadResults(olympiad, user);
 
         Question question = questionRepository.findById(answer.getQuestionId())
-                .orElseThrow(() -> new BusinessException("Вопрос не найден"));
+                .orElseThrow(() -> BusinessException.notFound("Вопрос не найден"));
         if (!isManualQuestion(question)) {
             throw new BusinessException("Этот вопрос проверяется автоматически");
         }
 
         int points = request.getPointsEarned() == null ? 0 : request.getPointsEarned();
+        if (participation.getStatus() == Participation.ParticipationStatus.ACTIVE) {
+            throw new BusinessException("Попытка ещё не завершена");
+        }
         if (points > question.getPoints()) {
             throw new BusinessException("Нельзя поставить больше максимального балла");
         }
@@ -340,6 +370,22 @@ public class ParticipationService {
         participationRepository.save(participation);
 
         return savedAnswer;
+    }
+
+    private LocalDateTime deadlineOf(Participation participation) {
+        return participation.getStartedAt().plusMinutes(participation.getOlympiad().getDurationMinutes());
+    }
+
+    private Participation completeAttempt(Participation participation, LocalDateTime finishedAt) {
+        List<Answer> answers = answerRepository.findByParticipationId(participation.getId());
+        participation.setFinishedAt(finishedAt);
+        participation.setScore(answers.stream()
+                .mapToInt(answer -> answer.getPointsEarned() == null ? 0 : answer.getPointsEarned())
+                .sum());
+        participation.setStatus(hasPendingManualReview(participation, answers)
+                ? Participation.ParticipationStatus.PENDING_REVIEW
+                : Participation.ParticipationStatus.FINISHED);
+        return participationRepository.save(participation);
     }
 
     private AnswerResultResponse toAnswerResult(Question question, Answer answer) {
@@ -398,7 +444,7 @@ public class ParticipationService {
                 .filter(participation -> participation.getStatus() == Participation.ParticipationStatus.FINISHED)
                 .sorted(participantComparator())
                 .toList();
-        java.util.LinkedHashMap<String, Integer> places = new java.util.LinkedHashMap<>();
+        Map<String, Integer> places = new java.util.LinkedHashMap<>();
         for (int i = 0; i < ranked.size(); i++) {
             places.put(ranked.get(i).getId(), i + 1);
         }
@@ -417,7 +463,7 @@ public class ParticipationService {
         boolean isOrganizer = user.getRole() == User.Role.ORGANIZER && olympiad.getCreatedBy().equals(user.getEmail());
         boolean isAdmin = user.getRole() == User.Role.ADMIN;
         if (!isOrganizer && !isAdmin) {
-            throw new BusinessException("Доступ запрещён");
+            throw BusinessException.forbidden("Доступ запрещён");
         }
     }
 

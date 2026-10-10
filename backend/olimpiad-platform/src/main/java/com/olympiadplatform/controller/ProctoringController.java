@@ -2,26 +2,33 @@ package com.olympiadplatform.controller;
 
 import com.olympiadplatform.dto.request.ProctoringEventRequest;
 import com.olympiadplatform.dto.response.ApiResponse;
+import com.olympiadplatform.dto.response.ProctoringReportResponse;
 import com.olympiadplatform.service.ProctoringService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/proctoring")
 @RequiredArgsConstructor
 public class ProctoringController {
-    
+
     private final ProctoringService proctoringService;
-    
+
     @PostMapping("/event")
-    public ResponseEntity<ApiResponse> logEvent(
-            @Valid @RequestBody ProctoringEventRequest request,
-            @AuthenticationPrincipal UserDetails userDetails) {
-        proctoringService.logEvent(request, userDetails.getUsername());
-        return ResponseEntity.ok(new ApiResponse(true, "Event logged successfully"));
+    @PreAuthorize("hasRole('STUDENT')")
+    public ApiResponse logEvent(@Valid @RequestBody ProctoringEventRequest request, Authentication auth) {
+        proctoringService.logEvent(request, auth.getName());
+        return new ApiResponse(true, "Событие записано");
+    }
+
+    @GetMapping("/olympiads/{olympiadId}/report")
+    @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
+    public ProctoringReportResponse getReport(@PathVariable UUID olympiadId, Authentication auth) {
+        return proctoringService.getReport(olympiadId, auth.getName());
     }
 }

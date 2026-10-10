@@ -19,6 +19,8 @@ public class OlympiadResponse {
     private Integer durationMinutes;
     private String status;
     private String createdBy;
+    private Integer questionCount;
+    private Integer totalPoints;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

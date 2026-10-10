@@ -68,15 +68,33 @@ class CheatingDetectionServiceTest {
 
     @Test
     void faceMissingIsFlaggedWhenRecentEventsThresholdIsExceeded() {
-        when(proctoringEventRepository.findByUserIdAndOlympiadIdAndTimestampAfter(
+        when(proctoringEventRepository.findByUserIdAndOlympiadIdAndEventTypeAndTimestampAfter(
                 eq("user-1"),
                 eq("olympiad-1"),
+                eq(ProctoringEvent.EventType.FACE_MISSING),
                 any(LocalDateTime.class)
-        )).thenReturn(Collections.nCopies(3, event(ProctoringEvent.EventType.FACE_MISSING)));
+        )).thenReturn(Collections.nCopies(2, event(ProctoringEvent.EventType.FACE_MISSING)));
 
         boolean flagged = service.analyzeEvent(event(ProctoringEvent.EventType.FACE_MISSING));
 
         assertThat(flagged).isTrue();
+    }
+
+    @Test
+    void cameraUnavailableIsAlwaysFlagged() {
+        assertThat(service.analyzeEvent(event(ProctoringEvent.EventType.CAMERA_UNAVAILABLE))).isTrue();
+    }
+
+    @Test
+    void firstCopyPasteIsNotFlagged() {
+        when(proctoringEventRepository.findByUserIdAndOlympiadIdAndEventTypeAndTimestampAfter(
+                eq("user-1"),
+                eq("olympiad-1"),
+                eq(ProctoringEvent.EventType.COPY_PASTE),
+                any(LocalDateTime.class)
+        )).thenReturn(List.of());
+
+        assertThat(service.analyzeEvent(event(ProctoringEvent.EventType.COPY_PASTE))).isFalse();
     }
 
     private ProctoringEvent event(ProctoringEvent.EventType type) {

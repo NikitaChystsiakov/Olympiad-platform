@@ -39,7 +39,7 @@ public class HolidayCalendarService {
                     .retrieve()
                     .body(NagerHoliday[].class);
         } catch (RestClientException ex) {
-            throw new BusinessException("Holiday calendar API is unavailable", ex);
+            throw new BusinessException("Календарь праздников недоступен", ex);
         }
 
         if (holidays == null) {

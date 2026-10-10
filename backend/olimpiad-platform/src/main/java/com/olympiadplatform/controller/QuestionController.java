@@ -9,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,66 +22,51 @@ public class QuestionController {
     private final QuestionService questionService;
 
     @GetMapping
-    public ResponseEntity<List<QuestionResponse>> getQuestions(
-            @PathVariable UUID olympiadId) {
-        return ResponseEntity.ok(questionService.getQuestionsByOlympiadId(olympiadId)
-                .stream()
-                .map(this::toResponse)
-                .toList());
+    public List<QuestionResponse> getQuestions(@PathVariable UUID olympiadId, Authentication auth) {
+        List<Question> questions = questionService.getQuestionsByOlympiadId(olympiadId, auth.getName());
+        boolean includeAnswers = !questions.isEmpty()
+                && questionService.canManage(questions.get(0).getOlympiad(), auth.getName());
+        return questions.stream()
+                .map(question -> toResponse(question, includeAnswers))
+                .toList();
     }
 
     @PostMapping
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
-    public ResponseEntity<QuestionResponse> addQuestion(
+    public QuestionResponse addQuestion(
             @PathVariable UUID olympiadId,
-            @Valid @RequestBody QuestionCreateRequest request) {
-        
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        
-        System.out.println("📥 ADD QUESTION - Olympiad: " + olympiadId);
-        System.out.println("📥 User: " + email);
-        System.out.println("📥 Text: " + request.getText());
-        System.out.println("📥 Type: " + request.getType());
-        System.out.println("📥 Options: " + request.getOptions());
-        System.out.println("📥 Answer: " + request.getCorrectAnswer());
-        System.out.println("📥 Points: " + request.getPoints());
-        
-        return ResponseEntity.ok(toResponse(questionService.addQuestion(olympiadId, request, email)));
+            @Valid @RequestBody QuestionCreateRequest request,
+            Authentication auth) {
+        return toResponse(questionService.addQuestion(olympiadId, request, auth.getName()), true);
     }
 
     @PutMapping("/{questionId}")
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
-    public ResponseEntity<QuestionResponse> updateQuestion(
+    public QuestionResponse updateQuestion(
             @PathVariable UUID olympiadId,
             @PathVariable String questionId,
-            @Valid @RequestBody QuestionCreateRequest request) {
-        
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        
-        return ResponseEntity.ok(toResponse(questionService.updateQuestion(olympiadId, questionId, request, email)));
+            @Valid @RequestBody QuestionCreateRequest request,
+            Authentication auth) {
+        return toResponse(questionService.updateQuestion(olympiadId, questionId, request, auth.getName()), true);
     }
 
     @DeleteMapping("/{questionId}")
     @PreAuthorize("hasAnyRole('ORGANIZER', 'ADMIN')")
     public ResponseEntity<Void> deleteQuestion(
             @PathVariable UUID olympiadId,
-            @PathVariable String questionId) {
-        
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-        
-        questionService.deleteQuestion(olympiadId, questionId, email);
+            @PathVariable String questionId,
+            Authentication auth) {
+        questionService.deleteQuestion(olympiadId, questionId, auth.getName());
         return ResponseEntity.noContent().build();
     }
 
-    private QuestionResponse toResponse(Question question) {
+    private QuestionResponse toResponse(Question question, boolean includeAnswer) {
         return new QuestionResponse(
                 question.getId(),
                 question.getText(),
                 question.getType().name(),
                 question.getOptions(),
+                includeAnswer ? question.getCorrectAnswer() : null,
                 question.getPoints()
         );
     }

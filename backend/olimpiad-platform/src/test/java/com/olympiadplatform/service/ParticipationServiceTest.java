@@ -296,6 +296,82 @@ class ParticipationServiceTest {
         assertThat(captor.getValue().getStatus()).isEqualTo(Participation.ParticipationStatus.FINISHED);
     }
 
+    @Test
+    void resultsAreHiddenFromStudentWhileAttemptIsActive() {
+        Participation active = participation("p-active", student, olympiad);
+        when(participationRepository.findById("p-active")).thenReturn(Optional.of(active));
+        when(userRepository.findByEmail(student.getEmail())).thenReturn(Optional.of(student));
+
+        assertThatThrownBy(() -> service.getResults("p-active", student.getEmail()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("после завершения");
+    }
+
+    @Test
+    void resultsAreHiddenFromOrganizerOfAnotherOlympiad() {
+        Participation finished = participation("p-1", student, olympiad);
+        finished.setStatus(Participation.ParticipationStatus.FINISHED);
+        User otherOrganizer = user("org-2", "other@test.com", User.Role.ORGANIZER);
+        when(participationRepository.findById("p-1")).thenReturn(Optional.of(finished));
+        when(userRepository.findByEmail(otherOrganizer.getEmail())).thenReturn(Optional.of(otherOrganizer));
+
+        assertThatThrownBy(() -> service.getResults("p-1", otherOrganizer.getEmail()))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void submitAfterDeadlineFinishesAttemptWithCollectedScore() {
+        Participation expired = participation("p-expired", student, olympiad);
+        expired.setStartedAt(LocalDateTime.now().minusMinutes(olympiad.getDurationMinutes() + 5));
+        when(participationRepository.findById("p-expired")).thenReturn(Optional.of(expired));
+        when(answerRepository.findByParticipationId("p-expired")).thenReturn(List.of(answer(5), answer(3)));
+        when(participationRepository.save(any(Participation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThatThrownBy(() -> service.submitAnswer("p-expired", "q-1", "4", student.getEmail()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("истекло");
+
+        assertThat(expired.getStatus()).isEqualTo(Participation.ParticipationStatus.FINISHED);
+        assertThat(expired.getScore()).isEqualTo(8);
+        assertThat(expired.getFinishedAt()).isEqualTo(expired.getStartedAt().plusMinutes(olympiad.getDurationMinutes()));
+    }
+
+    @Test
+    void scheduledJobFinishesOnlyExpiredAttempts() {
+        Participation running = participation("p-running", student, olympiad);
+        Participation expired = participation("p-expired", student, olympiad);
+        expired.setStartedAt(LocalDateTime.now().minusHours(2));
+        when(participationRepository.findWithOlympiadByStatus(Participation.ParticipationStatus.ACTIVE))
+                .thenReturn(List.of(running, expired));
+        when(answerRepository.findByParticipationId("p-expired")).thenReturn(List.of(answer(10)));
+        when(participationRepository.save(any(Participation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.finishExpiredAttempts();
+
+        assertThat(running.getStatus()).isEqualTo(Participation.ParticipationStatus.ACTIVE);
+        assertThat(expired.getStatus()).isEqualTo(Participation.ParticipationStatus.FINISHED);
+        assertThat(expired.getScore()).isEqualTo(10);
+    }
+
+    @Test
+    void savedAnswersAreReturnedOnlyToTheirAuthor() {
+        Participation active = participation("p-1", student, olympiad);
+        when(participationRepository.findById("p-1")).thenReturn(Optional.of(active));
+        Answer saved = answer(0);
+        saved.setQuestionId("q-1");
+        saved.setAnswer("POST");
+        when(answerRepository.findByParticipationId("p-1")).thenReturn(List.of(saved));
+
+        assertThat(service.getSavedAnswers("p-1", student.getEmail()))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.questionId()).isEqualTo("q-1");
+                    assertThat(item.answer()).isEqualTo("POST");
+                });
+        assertThatThrownBy(() -> service.getSavedAnswers("p-1", "intruder@test.com"))
+                .isInstanceOf(BusinessException.class);
+    }
+
     private Olympiad olympiad(Olympiad.OlympiadStatus status) {
         return Olympiad.builder()
                 .id(olympiadId)

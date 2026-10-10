@@ -46,7 +46,8 @@ public class AdminUserController {
     public ResponseEntity<UserResponse> updateUser(
             @PathVariable String id,
             @Valid @RequestBody AdminUserRequest request) {
-        return ResponseEntity.ok(adminUserService.update(id, request));
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        return ResponseEntity.ok(adminUserService.update(id, request, email));
     }
 
     @DeleteMapping("/{id}")

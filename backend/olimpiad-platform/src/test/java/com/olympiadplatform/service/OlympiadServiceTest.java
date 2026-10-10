@@ -124,16 +124,27 @@ class OlympiadServiceTest {
     }
 
     @Test
-    void getAllOlympiadsUsesStatusAndSearchRepositoryMethod() {
+    void getAllOlympiadsTrimsSearchAndHidesForeignDraftsFromNonAdmins() {
         PageRequest pageable = PageRequest.of(0, 20);
         Page<Olympiad> expected = new PageImpl<>(List.of(olympiad(Olympiad.OlympiadStatus.PUBLISHED)));
-        when(olympiadRepository.findByStatusAndSearch(Olympiad.OlympiadStatus.PUBLISHED, "java", pageable))
+        when(olympiadRepository.findVisible(Olympiad.OlympiadStatus.PUBLISHED, "java", "student@test.com", false, pageable))
                 .thenReturn(expected);
 
-        Page<Olympiad> result = service.getAllOlympiads(Olympiad.OlympiadStatus.PUBLISHED, " java ", pageable);
+        Page<Olympiad> result = service.getAllOlympiads(Olympiad.OlympiadStatus.PUBLISHED, " java ", "student@test.com", pageable);
 
         assertThat(result).isSameAs(expected);
-        verify(olympiadRepository).findByStatusAndSearch(Olympiad.OlympiadStatus.PUBLISHED, "java", pageable);
+        verify(olympiadRepository).findVisible(Olympiad.OlympiadStatus.PUBLISHED, "java", "student@test.com", false, pageable);
+    }
+
+    @Test
+    void publishOlympiadRejectsDraftWithoutQuestions() {
+        Olympiad olympiad = olympiad(Olympiad.OlympiadStatus.DRAFT);
+        olympiad.getQuestions().clear();
+        when(olympiadRepository.findById(olympiadId)).thenReturn(Optional.of(olympiad));
+
+        assertThatThrownBy(() -> service.publishOlympiad(olympiadId, "org@test.com"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("хотя бы один вопрос");
     }
 
     private Olympiad olympiad(Olympiad.OlympiadStatus status) {
@@ -146,6 +157,12 @@ class OlympiadServiceTest {
                 .durationMinutes(60)
                 .status(status)
                 .createdBy("org@test.com")
+                .questions(new java.util.ArrayList<>(List.of(com.olympiadplatform.entity.Question.builder()
+                        .text("2 + 2?")
+                        .type(com.olympiadplatform.entity.Question.QuestionType.TEXT)
+                        .correctAnswer("4")
+                        .points(1)
+                        .build())))
                 .build();
     }
 }

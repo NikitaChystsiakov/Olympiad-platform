@@ -30,19 +30,19 @@ public class AdminUserService {
     @Transactional
     public UserResponse create(@NonNull AdminUserRequest request) {
         if (isBlank(request.getEmail())) {
-            throw new BusinessException("Email is required");
+            throw new BusinessException("Укажите email");
         }
         if (isBlank(request.getPassword())) {
-            throw new BusinessException("Password is required");
+            throw new BusinessException("Укажите пароль");
         }
         if (isBlank(request.getFullName())) {
-            throw new BusinessException("Full name is required");
+            throw new BusinessException("Укажите ФИО");
         }
         if (request.getRole() == null) {
-            throw new BusinessException("Role is required");
+            throw new BusinessException("Укажите роль");
         }
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new BusinessException("Email already registered");
+            throw new BusinessException("Пользователь с таким email уже существует");
         }
 
         User user = User.builder()
@@ -58,16 +58,24 @@ public class AdminUserService {
 
     @NonNull
     @Transactional
-    public UserResponse update(@NonNull String id, @NonNull AdminUserRequest request) {
+    public UserResponse update(@NonNull String id, @NonNull AdminUserRequest request, @NonNull String currentAdminEmail) {
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("User not found"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
+
+        boolean isSelf = user.getEmail().equalsIgnoreCase(currentAdminEmail);
+        if (isSelf && request.getRole() != null && request.getRole() != User.Role.ADMIN) {
+            throw new BusinessException("Нельзя снять роль администратора с самого себя");
+        }
+        if (isSelf && Boolean.FALSE.equals(request.getActive())) {
+            throw new BusinessException("Нельзя заблокировать собственный аккаунт");
+        }
 
         if (!isBlank(request.getEmail())) {
             String email = request.getEmail().trim();
             userRepository.findByEmail(email)
                     .filter(existing -> !existing.getId().equals(id))
                     .ifPresent(existing -> {
-                        throw new BusinessException("Email already registered");
+                        throw new BusinessException("Пользователь с таким email уже существует");
                     });
             user.setEmail(email);
         }
@@ -90,9 +98,9 @@ public class AdminUserService {
     @Transactional
     public void delete(@NonNull String id, @NonNull String currentAdminEmail) {
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("User not found"));
+                .orElseThrow(() -> BusinessException.notFound("Пользователь не найден"));
         if (user.getEmail().equalsIgnoreCase(currentAdminEmail)) {
-            throw new BusinessException("You cannot delete your own account");
+            throw new BusinessException("Нельзя удалить собственный аккаунт");
         }
         userRepository.delete(user);
     }

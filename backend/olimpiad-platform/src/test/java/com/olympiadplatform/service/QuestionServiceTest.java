@@ -5,7 +5,9 @@ import com.olympiadplatform.entity.Olympiad;
 import com.olympiadplatform.entity.Question;
 import com.olympiadplatform.exception.BusinessException;
 import com.olympiadplatform.repository.OlympiadRepository;
+import com.olympiadplatform.repository.ParticipationRepository;
 import com.olympiadplatform.repository.QuestionRepository;
+import com.olympiadplatform.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,12 +32,18 @@ class QuestionServiceTest {
     @Mock
     private OlympiadRepository olympiadRepository;
 
+    @Mock
+    private UserRepository userRepository;
+
+    @Mock
+    private ParticipationRepository participationRepository;
+
     private QuestionService service;
     private UUID olympiadId;
 
     @BeforeEach
     void setUp() {
-        service = new QuestionService(questionRepository, olympiadRepository);
+        service = new QuestionService(questionRepository, olympiadRepository, userRepository, participationRepository);
         olympiadId = UUID.randomUUID();
     }
 

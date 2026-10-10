@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "proctoring_events", indexes = {
-    @Index(name = "idx_proctoring_user_time", columnList = "userId, timestamp")
+    @Index(name = "idx_proctoring_user_time", columnList = "user_id, timestamp")
 })
 @Data
 @Builder
@@ -20,6 +20,7 @@ public class ProctoringEvent {
     @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
     
+    /** Email of the participant (the JWT subject used across the API). */
     @Column(nullable = false)
     private String userId;
     
@@ -42,6 +43,6 @@ public class ProctoringEvent {
     private boolean isFlagged = false;
     
     public enum EventType {
-        TAB_SWITCH, FULLSCREEN_EXIT, FACE_MISSING, MULTIPLE_FACES, SUSPICIOUS_SOUND, SCREEN_RECORDING
+        TAB_SWITCH, FULLSCREEN_EXIT, FACE_MISSING, MULTIPLE_FACES, COPY_PASTE, CAMERA_UNAVAILABLE, SUSPICIOUS_SOUND, SCREEN_RECORDING
     }
 }
