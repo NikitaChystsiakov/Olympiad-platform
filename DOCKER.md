@@ -1,53 +1,52 @@
 # Docker
 
-Проект полностью запускается через Docker Compose:
+The whole stack (Postgres, Spring Boot API, nginx with the built frontend) runs with Docker Compose.
 
 ```bash
+cp .env.example .env
+# set APP_JWT_SECRET, e.g. the output of: openssl rand -base64 48
 docker compose -p olympiad-platform up -d --build
 ```
 
-После запуска:
+Compose refuses to start without `APP_JWT_SECRET` — there is no built-in default secret.
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8080/api
-- PostgreSQL с хоста: `localhost:15432`
-- Redis с хоста: `localhost:16379`
+After the backend health check passes (about a minute on the first build):
 
-Flyway автоматически создаёт таблицы и добавляет seed-данные:
+| What | URL |
+| --- | --- |
+| App | http://localhost:3000 |
+| API | http://localhost:8080/api |
+| Health | http://localhost:8080/actuator/health |
+| Postgres from the host | `localhost:15432`, user `postgres` |
 
-| Роль | Email | Пароль |
-| --- | --- | --- |
-| ADMIN | `admin@test.com` | `admin123` |
-| ORGANIZER | `org@test.com` | `org123` |
-| STUDENT | `student@test.com` | `student123` |
+nginx serves the SPA and proxies `/api/` to the backend, so the browser never calls the API cross-origin.
 
-Также создаётся опубликованная демо-олимпиада `Demo Programming Olympiad`.
+Flyway applies the schema and demo data (migration `V6__demo_content.sql`) on first start. Demo accounts: `student@test.com / student123`, `org@test.com / org123`, `admin@test.com / admin123`.
 
-Внутри Docker-сети backend подключается к сервисам так:
-
-- PostgreSQL: `postgres:5432`
-- Redis: `redis:6379`
-
-Остановить контейнеры:
+## Common commands
 
 ```bash
+# logs
+docker compose -p olympiad-platform logs -f backend
+
+# stop
 docker compose -p olympiad-platform down
-```
 
-Остановить и удалить данные PostgreSQL/Redis:
-
-```bash
+# stop and wipe the database and uploaded files (demo data is re-created on next start)
 docker compose -p olympiad-platform down -v
 ```
 
-Эта команда нужна, если хочется заново применить миграции и seed-данные на чистую БД.
+## Variables
 
-Посмотреть логи:
+All variables are listed in `.env.example`. The ones Compose reads:
 
-```bash
-docker compose -p olympiad-platform logs -f backend
-docker compose -p olympiad-platform logs -f frontend
-```
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `APP_JWT_SECRET` | — (required) | Base64 HMAC key, at least 256 bits |
+| `POSTGRES_PASSWORD` | `postgres` | Database password |
+| `APP_CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Origins allowed to call the API directly |
+| `GOOGLE_CLIENT_ID` / `VITE_GOOGLE_CLIENT_ID` | empty | Google sign-in; the button is hidden when empty |
+| `JUDGE0_URL` | `https://ce.judge0.com` | Code execution sandbox |
+| `NAGER_DATE_URL` | `https://date.nager.at` | Public-holiday warnings |
 
-Переменные окружения можно положить в `.env` рядом с `docker-compose.yml`.
-Минимальный пример есть в `.env.example`.
+Uploaded files are stored in the `uploads_data` volume.

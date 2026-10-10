@@ -3,11 +3,9 @@ services:
     image: postgres:15-alpine
     container_name: olympiad-postgres
     environment:
-      TZ: Europe/Minsk
-      PGTZ: Europe/Minsk
       POSTGRES_DB: olympiad_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
       - "15432:5432"
     volumes:
@@ -19,36 +17,20 @@ services:
       retries: 5
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    container_name: olympiad-redis
-    ports:
-      - "16379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   backend:
     build:
       context: ./backend/olimpiad-platform
       dockerfile: Dockerfile
     container_name: olympiad-backend
     environment:
-      TZ: Europe/Minsk
-      JAVA_TOOL_OPTIONS: "-Duser.timezone=Europe/Minsk"
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/olympiad_db
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
-      SPRING_DATA_REDIS_HOST: redis
-      SPRING_DATA_REDIS_PORT: 6379
-      APP_JWT_SECRET: ${APP_JWT_SECRET:-c2VjcmV0LWtleS1mb3Itam93YW5uLW9seW1waWFkLXBsYXRmb3JtLTIwMjYtc3VwZXItc2VjdXJlLWtleQo=}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      APP_JWT_SECRET: ${APP_JWT_SECRET:?Set APP_JWT_SECRET in .env (openssl rand -base64 48)}
       APP_JWT_EXPIRATION_MS: 3600000
       APP_JWT_REFRESH_EXPIRATION_MS: 86400000
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      APP_UPLOAD_DIR: /app/uploads
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       JUDGE0_URL: ${JUDGE0_URL:-https://ce.judge0.com}
       NAGER_DATE_URL: ${NAGER_DATE_URL:-https://date.nager.at}
@@ -57,10 +39,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     volumes:
       - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
     restart: unless-stopped
 
   frontend:
@@ -73,10 +59,10 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   postgres_data:
-  redis_data:
   uploads_data:
