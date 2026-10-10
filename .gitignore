@@ -1,0 +1,28 @@
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# OS / editors
+.DS_Store
+.idea/
+*.iml
+.vscode/
+
+# Build output
+node_modules/
+dist/
+target/
+uploads/
+*.tsbuildinfo
+
+# Local tooling
+.claude/
+.playwright-mcp/
+
+# Design process notes (kept local)
+.art-director/
+.impeccable/
+PRODUCT.md
+/DESIGN.md
+HANDOFF.md
