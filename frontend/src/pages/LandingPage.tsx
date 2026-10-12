@@ -346,8 +346,9 @@ function RankingSection() {
           <ol>
             {RANKING_SAMPLE.map((row) =>
               row === 'gap' ? (
-                <li key="gap" aria-hidden className="border-b border-line/70 px-5 py-1.5 font-mono text-sm text-soft sm:px-6">
-                  ⋯
+                <li key="gap" className="grid grid-cols-[44px_1fr] items-center gap-x-4 border-b border-line/70 px-5 py-2 text-[13px] text-soft sm:grid-cols-[56px_1fr] sm:px-6">
+                  <span aria-hidden className="w-10 text-center font-mono leading-none">⋮</span>
+                  <span>{t('landing.ranking.hidden', { count: 2 })}</span>
                 </li>
               ) : (
               <li key={row.place} className="grid grid-cols-[44px_1fr_auto] items-center gap-x-4 gap-y-2 border-b border-line/70 px-5 py-3.5 last:border-b-0 sm:grid-cols-[56px_1.3fr_1.4fr_160px] sm:px-6">

@@ -121,7 +121,7 @@ export function AdminUsersPage() {
         <EmptyState title={t('users.empty')} />
       ) : (
         <div className={cn('overflow-hidden rounded-card border border-line bg-surface shadow-lift transition-opacity', loading && 'opacity-60')}>
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="bg-muted">
                 <tr className="text-[11px] font-semibold uppercase tracking-[0.08em] text-soft">

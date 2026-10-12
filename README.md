@@ -28,7 +28,8 @@ The demo database (migration `V6`) has four olympiads — open, finished with a 
 
 **Proctoring**
 - Browser signals: tab switch, fullscreen exit, clipboard paste.
-- Camera signals via in-browser face detection ([`@vladmandic/face-api`](https://github.com/vladmandic/face-api), tiny face detector, loaded lazily): face missing, multiple faces, camera unavailable. Video never leaves the browser — only events are sent.
+- Camera check on the briefing screen, before the timer starts: live preview, face status, and a plain-language fix with a retry button when access is blocked, the camera is busy in another app, or none is found. The same stream continues into the attempt; a camera that disconnects mid-attempt is reported.
+- Camera signals via in-browser face detection ([`@vladmandic/face-api`](https://github.com/vladmandic/face-api), tiny face detector) running in a Web Worker, so model loading and inference never freeze the attempt page: face missing, multiple faces, camera unavailable. Video never leaves the browser — only events are sent.
 - The server decides what is suspicious: repeated events of the same type within 5 minutes beyond a tolerance (tab switch > 3, fullscreen exit > 2, face missing > 1, paste > 2), or any multiple-faces / camera-denied event.
 - Each participant gets a risk level: **High** (3+ flagged events or a second face), **Medium** (any flagged event or 5+ events), **Low**. It is a signal for a human reviewer, not a verdict.
 

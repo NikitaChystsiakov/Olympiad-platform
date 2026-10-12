@@ -1,11 +1,11 @@
-import { ArrowLeft, ArrowRight, Camera, CameraOff, ClipboardPaste, Clock, Maximize, PanelsTopLeft, Save, ScanFace, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Camera, CameraOff, ClipboardPaste, Clock, Maximize, PanelsTopLeft, RotateCcw, Save, ScanFace, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { errorMessage } from '@/api/http';
 import { getOlympiadById, getQuestions } from '@/api/olympiads';
 import { finishParticipation, getMyAttempts, getSavedAnswers, startParticipation, submitAnswer } from '@/api/participations';
-import { useCameraProctoring, type CameraState, type FaceState } from '@/hooks/useCameraProctoring';
+import { useCameraProctoring, type CameraError, type CameraProctoring } from '@/hooks/useCameraProctoring';
 import { enterFullscreen, exitFullscreen, useBrowserProctoring } from '@/hooks/useProctoring';
 import { useT } from '@/i18n';
 import type { Attempt, Olympiad, Question } from '@/types';
@@ -23,7 +23,7 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 const TEXT_DEBOUNCE_MS = 600;
 const FINAL_MINUTES = 5 * 60;
 
-/** The attempt always renders in the dark "exam mode" world. */
+/** The briefing follows the site theme; the attempt itself always runs in the dark "exam mode". */
 export function TakeOlympiadPage() {
   const { id: olympiadId = '' } = useParams();
   const [olympiad, setOlympiad] = useState<Olympiad | null>(null);
@@ -35,6 +35,8 @@ export function TakeOlympiadPage() {
   const [starting, setStarting] = useState(false);
   const navigate = useNavigate();
   const t = useT();
+  // One camera stream for the page: checked on the briefing, reused in the exam room.
+  const camera = useCameraProctoring(olympiadId, attempt !== null);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,11 +75,11 @@ export function TakeOlympiadPage() {
   };
 
   return (
-    <div className="dark min-h-screen bg-canvas text-fg [color-scheme:dark]">
+    <div className={cn('min-h-screen bg-canvas text-fg transition-colors duration-300', attempt && 'dark')}>
       {attempt && olympiad ? (
-        <ExamRoom olympiad={olympiad} attempt={attempt} questions={questions} initialAnswers={initialAnswers} />
+        <ExamRoom olympiad={olympiad} attempt={attempt} questions={questions} initialAnswers={initialAnswers} camera={camera} />
       ) : (
-        <Briefing olympiad={olympiad} existing={existing} loading={loading} starting={starting} onStart={() => void begin()} t={t} />
+        <Briefing olympiad={olympiad} existing={existing} loading={loading} starting={starting} onStart={() => void begin()} camera={camera} t={t} />
       )}
     </div>
   );
@@ -89,6 +91,7 @@ function Briefing({
   loading,
   starting,
   onStart,
+  camera,
   t,
 }: {
   olympiad: Olympiad | null;
@@ -96,6 +99,7 @@ function Briefing({
   loading: boolean;
   starting: boolean;
   onStart: () => void;
+  camera: CameraProctoring;
   t: ReturnType<typeof useT>;
 }) {
   const rules: Array<{ icon: typeof Camera; key: string }> = [
@@ -143,12 +147,14 @@ function Briefing({
             <ul className="mt-4 space-y-3">
               {rules.map(({ icon: Icon, key }) => (
                 <li key={key} className="flex gap-3">
-                  <Icon className="mt-0.5 h-[18px] w-[18px] shrink-0 text-marker" />
+                  <Icon className="mt-0.5 h-[18px] w-[18px] shrink-0 text-accent dark:text-marker" />
                   <span>{t(key)}</span>
                 </li>
               ))}
             </ul>
           </section>
+
+          <CameraCheck camera={camera} attemptRunning={Boolean(existing)} />
 
           <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-line pt-6">
             <Button size="lg" onClick={onStart} loading={starting} className="min-w-[200px]">
@@ -159,6 +165,7 @@ function Briefing({
                 {t('attempt.left')}: <span className="font-mono">{formatTimer(Math.ceil((new Date(existing.deadline).getTime() - Date.now()) / 1000))}</span>
               </span>
             )}
+            {camera.cameraState === 'off' && <p className="basis-full text-sm text-soft">{t('attempt.cameraStartWithout')}</p>}
           </div>
         </div>
       )}
@@ -171,10 +178,13 @@ interface ExamRoomProps {
   attempt: Attempt;
   questions: Question[];
   initialAnswers: Record<string, string>;
+  camera: CameraProctoring;
 }
 
-function ExamRoom({ olympiad, attempt, questions, initialAnswers }: ExamRoomProps) {
+function ExamRoom({ olympiad, attempt, questions, initialAnswers, camera }: ExamRoomProps) {
   const t = useT();
+  const cameraSlow = useSlowStart(camera.cameraState);
+  useExamTheme();
   const navigate = useNavigate();
   const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers);
   const [index, setIndex] = useState(() => {
@@ -192,7 +202,6 @@ function ExamRoom({ olympiad, attempt, questions, initialAnswers }: ExamRoomProp
   const finishingRef = useRef(false);
   const proctoringOn = !finishing;
   const { tabSwitches, isFullscreen } = useBrowserProctoring(olympiad.id, proctoringOn);
-  const { videoRef, cameraState, faceState } = useCameraProctoring(olympiad.id, proctoringOn);
 
   const send = useCallback(
     async (questionId: string, answer: string, retry = true): Promise<void> => {
@@ -406,16 +415,22 @@ function ExamRoom({ olympiad, attempt, questions, initialAnswers }: ExamRoomProp
               <p className="mt-1.5 font-mono text-[52px] font-semibold leading-none tracking-[-0.03em] tabular-nums">{formatTimer(secondsLeft)}</p>
             </div>
             <div className="relative aspect-[4/3] overflow-hidden rounded-chip bg-[#0A0C0B] ring-1 ring-line">
-              <video ref={videoRef} muted playsInline className="h-full w-full -scale-x-100 object-cover" />
-              {cameraState !== 'on' && (
-                <div className="absolute inset-0 grid place-items-center text-center text-sm text-soft">
+              <video ref={camera.previewRef} muted playsInline className="h-full w-full -scale-x-100 object-cover" />
+              {camera.cameraState !== 'on' && (
+                <div className="absolute inset-0 grid place-items-center p-4 text-center text-sm text-soft">
                   <span className="flex flex-col items-center gap-2">
-                    {cameraState === 'off' ? <CameraOff className="h-6 w-6" /> : <Camera className="h-6 w-6 animate-pulse-dot" />}
-                    {cameraState === 'off' ? t('attempt.cameraOff') : t('attempt.cameraStarting')}
+                    {camera.cameraState === 'off' ? <CameraOff className="h-6 w-6" /> : <Camera className="h-6 w-6 animate-pulse-dot" />}
+                    {camera.cameraState === 'off' ? t(cameraShortKey(camera.cameraError)) : t('attempt.cameraAllow')}
+                    {(camera.cameraState === 'off' || cameraSlow) && (
+                      <Button size="sm" variant="secondary" onClick={camera.retry} className="mt-1">
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        {t('attempt.cameraRetry')}
+                      </Button>
+                    )}
                   </span>
                 </div>
               )}
-              {cameraState === 'on' && (
+              {camera.cameraState === 'on' && (
                 <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-md bg-black/55 px-2 py-0.5 text-[11px] font-semibold text-white">
                   <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-[#FF5A4E]" />
                   REC
@@ -423,7 +438,7 @@ function ExamRoom({ olympiad, attempt, questions, initialAnswers }: ExamRoomProp
               )}
             </div>
             <ul className="space-y-2 rounded-chip border border-line bg-surface p-3 text-[13px]">
-              <FaceStatus cameraState={cameraState} faceState={faceState} />
+              <FaceStatus camera={camera} />
               <Signal ok={isFullscreen} icon={<Maximize className="h-4 w-4" />}>
                 <span className="flex flex-1 items-center justify-between gap-2">
                   {isFullscreen ? t('attempt.fullscreenOn') : t('attempt.fullscreenOff')}
@@ -483,25 +498,139 @@ function Signal({ ok, icon, children }: { ok: boolean; icon: ReactNode; children
   );
 }
 
-function FaceStatus({ cameraState, faceState }: { cameraState: CameraState; faceState: FaceState }) {
+/** The exam room is always dark; the whole document follows so scrollbars and overscroll match. */
+function useExamTheme() {
+  useEffect(() => {
+    const root = document.documentElement;
+    const wasDark = root.classList.contains('dark');
+    root.classList.add('dark');
+    return () => {
+      if (!wasDark) root.classList.remove('dark');
+    };
+  }, []);
+}
+
+const CAMERA_ERROR_KEYS: Record<CameraError, string> = {
+  denied: 'attempt.cameraErrDenied',
+  notFound: 'attempt.cameraErrNotFound',
+  busy: 'attempt.cameraErrBusy',
+  insecure: 'attempt.cameraErrInsecure',
+  ended: 'attempt.cameraErrEnded',
+  unknown: 'attempt.cameraErrUnknown',
+};
+
+function cameraShortKey(error: CameraError | null) {
+  switch (error) {
+    case 'denied':
+      return 'attempt.cameraShortDenied';
+    case 'busy':
+      return 'attempt.cameraShortBusy';
+    case 'notFound':
+      return 'attempt.cameraShortNotFound';
+    case 'ended':
+      return 'attempt.cameraShortEnded';
+    default:
+      return 'attempt.cameraOff';
+  }
+}
+
+/** True once the camera has been waiting for permission long enough to need a hint. */
+function useSlowStart(state: CameraProctoring['cameraState']) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (state !== 'starting') return;
+    const timer = window.setTimeout(() => setSlow(true), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  return slow;
+}
+
+/** Briefing block: live preview and a plain-language status before the timer starts. */
+function CameraCheck({ camera, attemptRunning }: { camera: CameraProctoring; attemptRunning: boolean }) {
   const t = useT();
+  const slow = useSlowStart(camera.cameraState);
+  const { cameraState, cameraError, faceState } = camera;
+
+  const stuck = slow && camera.permission === 'granted';
+  let tone: 'ok' | 'warn' | 'bad' | 'wait' = stuck ? 'warn' : 'wait';
+  let message = stuck ? t('attempt.cameraStuck') : t('attempt.cameraWaiting');
+  let hint: string | null = stuck ? t('attempt.cameraStuckHint') : slow ? t('attempt.cameraWaitingHint') : null;
+  if (cameraState === 'off') {
+    tone = 'bad';
+    message = t(cameraShortKey(cameraError));
+    hint = t(CAMERA_ERROR_KEYS[cameraError ?? 'unknown']);
+  } else if (cameraState === 'on') {
+    hint = null;
+    if (faceState === 'ok') [tone, message] = ['ok', t('attempt.cameraReady')];
+    else if (faceState === 'missing') [tone, message] = ['warn', t('attempt.cameraNoFace')];
+    else if (faceState === 'many') [tone, message] = ['warn', t('attempt.cameraManyFaces')];
+    else if (faceState === 'unsupported') [tone, message] = ['warn', t('attempt.cameraNoDetector')];
+    else message = t('attempt.cameraOnLoading');
+  }
+
+  return (
+    <section className="mt-8" aria-labelledby="camera-check-title">
+      <h2 id="camera-check-title" className="font-serif text-xl font-semibold">
+        {t('attempt.cameraCheckTitle')}
+      </h2>
+      {!attemptRunning && <p className="mt-1 text-sm text-soft">{t('attempt.cameraCheckLead')}</p>}
+      <div className="mt-4 grid gap-4 rounded-card border border-line bg-surface p-4 sm:grid-cols-[220px_1fr] sm:items-center">
+        <div className="relative aspect-[4/3] overflow-hidden rounded-chip bg-[#0A0C0B] ring-1 ring-line">
+          <video ref={camera.previewRef} muted playsInline className="h-full w-full -scale-x-100 object-cover" />
+          {cameraState !== 'on' && (
+            <div className="absolute inset-0 grid place-items-center text-soft">
+              {cameraState === 'off' ? <CameraOff className="h-6 w-6" /> : <Camera className="h-6 w-6 animate-pulse-dot" />}
+            </div>
+          )}
+        </div>
+        <div aria-live="polite">
+          <p
+            className={cn(
+              'flex items-center gap-2 font-semibold',
+              tone === 'ok' && 'text-accent',
+              tone === 'warn' && 'text-risk-mid dark:text-marker',
+              tone === 'bad' && 'text-risk-high',
+            )}
+          >
+            <ScanFace className="h-[18px] w-[18px] shrink-0" />
+            {message}
+          </p>
+          {hint && <p className="mt-2 max-w-[52ch] text-sm text-soft">{hint}</p>}
+          {(cameraState === 'off' || slow) && (
+            <Button size="sm" variant="secondary" onClick={camera.retry} className="mt-3">
+              <RotateCcw className="h-3.5 w-3.5" />
+              {t('attempt.cameraRetry')}
+            </Button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FaceStatus({ camera }: { camera: CameraProctoring }) {
+  const t = useT();
+  const { cameraState, cameraError, faceState } = camera;
   if (cameraState === 'off') {
     return (
       <Signal ok={false} icon={<CameraOff className="h-4 w-4" />}>
-        {t('attempt.cameraOff')}
+        {t(cameraShortKey(cameraError))}
       </Signal>
     );
   }
   const label =
-    faceState === 'ok'
-      ? t('attempt.faceOk')
-      : faceState === 'missing'
-        ? t('attempt.faceMissing')
-        : faceState === 'many'
-          ? t('attempt.faceMany')
-          : faceState === 'unsupported'
-            ? t('attempt.faceUnsupported')
-            : t('attempt.cameraStarting');
+    cameraState === 'starting'
+      ? t('attempt.cameraAllow')
+      : faceState === 'ok'
+        ? t('attempt.faceOk')
+        : faceState === 'missing'
+          ? t('attempt.faceMissing')
+          : faceState === 'many'
+            ? t('attempt.faceMany')
+            : faceState === 'unsupported'
+              ? t('attempt.faceUnsupported')
+              : t('attempt.cameraOnLoading');
   return (
     <Signal ok={faceState === 'ok'} icon={<ScanFace className="h-4 w-4" />}>
       {label}

@@ -109,7 +109,7 @@ export function ProctoringAnalyticsPage() {
                 {t('proctoring.live')}
               </span>
             </div>
-            <div className="overflow-x-auto">
+            <div className="relative overflow-x-auto">
               <table className="w-full min-w-[920px] text-left text-sm">
                 <thead className="bg-muted">
                   <tr className="text-[11px] font-semibold uppercase tracking-[0.08em] text-soft">
@@ -177,18 +177,30 @@ export function ProctoringAnalyticsPage() {
             ) : (
               <ol className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface">
                 {events.map((event) => (
-                  <li key={event.id} className="grid gap-x-4 gap-y-1 px-5 py-3 sm:grid-cols-[132px_190px_1fr_auto] sm:items-center">
-                    <time className="whitespace-nowrap text-[13px] text-soft num" dateTime={event.timestamp}>
+                  <li
+                    key={event.id}
+                    className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 px-5 py-3 sm:grid-cols-[132px_190px_minmax(0,1fr)_auto]"
+                  >
+                    <time className="order-1 whitespace-nowrap text-[13px] text-soft num" dateTime={event.timestamp}>
                       {formatShort(event.timestamp)}
                     </time>
-                    <span className="truncate font-medium">{event.userName}</span>
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', TYPE_COLOR[event.eventType])} aria-hidden />
-                      <span className="font-medium">{t(`proctoring.typesLong.${event.eventType}`)}</span>
-                      {/* Event details are recorded in Russian by the client. */}
-                      {event.metadata && locale === 'ru' && <span className="truncate text-soft">— {event.metadata}</span>}
+                    <span className="order-3 col-span-2 truncate font-medium sm:order-2 sm:col-span-1">{event.userName}</span>
+                    <span className="order-4 col-span-2 flex min-w-0 items-start gap-2 sm:order-3 sm:col-span-1 sm:items-center">
+                      <span className={cn('mt-1.5 h-2.5 w-2.5 shrink-0 rounded-sm sm:mt-0', TYPE_COLOR[event.eventType])} aria-hidden />
+                      <span className="min-w-0 sm:truncate">
+                        <span className="font-medium">{t(`proctoring.typesLong.${event.eventType}`)}</span>
+                        {/* Event details are recorded in Russian by the client. */}
+                        {event.metadata && locale === 'ru' && (
+                          <span className="block text-sm text-soft sm:inline sm:text-[15px]">
+                            <span className="hidden sm:inline"> — </span>
+                            {event.metadata}
+                          </span>
+                        )}
+                      </span>
                     </span>
-                    <span>{event.flagged ? <Badge tone="high">{t('proctoring.flagged')}</Badge> : <Badge>{t('proctoring.observed')}</Badge>}</span>
+                    <span className="order-2 justify-self-end sm:order-4">
+                      {event.flagged ? <Badge tone="high">{t('proctoring.flagged')}</Badge> : <Badge>{t('proctoring.observed')}</Badge>}
+                    </span>
                   </li>
                 ))}
               </ol>
