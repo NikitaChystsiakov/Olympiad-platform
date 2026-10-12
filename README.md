@@ -1,5 +1,7 @@
 # Olympus Proctor
 
+![Java](https://img.shields.io/badge/Java-21-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F) ![React](https://img.shields.io/badge/React-18-61DAFB) ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791) ![Docker](https://img.shields.io/badge/Docker-compose-2496ED)
+
 Online olympiads end to end: an organizer creates questions and a start window, students take a timed attempt with camera proctoring and a code sandbox, answers are graded automatically or by hand, and the organizer sees a ranking with a per-participant cheating-risk level next to each score.
 
 Full-stack pet project: Java 21 / Spring Boot 3.5 / PostgreSQL on the back, React 18 / TypeScript on the front. Interface in Russian and English.
@@ -51,9 +53,13 @@ The demo database (migration `V6`) has four olympiads — open, finished with a 
 | | |
 | --- | --- |
 | ![Attempt: code question](docs/screenshots/exam.png) | ![Ranking with risk levels](docs/screenshots/ranking.png) |
-| Attempt — code question, ink timer, proctoring status | Organizer ranking with risk levels |
+| **Attempt** — code question, ink timer, proctoring status | **Ranking** with risk levels |
 | ![Proctoring report](docs/screenshots/proctoring.png) | ![Student result](docs/screenshots/result.png) |
-| Proctoring report | Student result with reviewer comments |
+| **Proctoring report** — counters per signal, event feed | **Student result** with reviewer comments |
+| ![Question editor](docs/screenshots/questions.png) | ![Admin: users](docs/screenshots/admin-users.png) |
+| **Question editor** — five question types | **Admin** — roles and blocking |
+| ![Dark theme, English UI](docs/screenshots/ranking-dark-en.png) | ![Mobile dashboard](docs/screenshots/mobile-dashboard.png) |
+| **Dark theme + English UI** | **Mobile layout** |
 
 ## Stack
 
